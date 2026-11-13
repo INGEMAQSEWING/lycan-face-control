@@ -18,9 +18,22 @@ iluminado (``barrido.Barrido``).
 "Escribir" devuelve el foco al programa que la persona estaba usando y le pasa el texto al motor
 (``app.motor.escribir``), que lo envía con SendInput Unicode. En modo Directo cada tecla se envía
 al instante (Borrar = tecla Retroceso).
+
+Ronda 2 de arreglos:
+- **Franja de avisos** (ámbar, sobre la fila de sugerencias, sin tapar el texto): con el teclado
+  abierto la ventana principal queda tapada, así que aquí se ven los avisos («No veo su cara»,
+  cámara, «Primero elija el programa…»), la pausa (y cómo seguir) y el barrido detenido.
+- Después de **Hablar** (o de Escribir en modo Mensaje) la primera letra o sugerencia empieza un
+  mensaje nuevo (Deshacer recupera el anterior, y Repetir lo vuelve a decir). **Limpiar** ya no
+  pide confirmación: Deshacer lo recupera.
+- Modo Directo: un cambio solo se aplica al texto del teclado si de verdad se puede enviar; si la
+  ventana de destino cambió, se empieza un mensaje nuevo (nunca se mandan retrocesos a otra ventana).
+- Las frases urgentes siempre se dicen (con alerta), aunque «Decir las frases» esté apagado.
+- Tecla «123»: página de números y signos.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import time
 import tkinter as tk
@@ -28,8 +41,9 @@ import tkinter as tk
 from .. import constantes as K
 from ..barrido import VOLVER, Barrido
 from ..frases import Frases, texto_final
-from ..teclado_logica import (ACCIONES, ACCIONES_TEXTO, MAX_TEXTO, N_RAPIDAS, N_SUGERENCIAS, Escritura, buscar_tecla,
-                              disposicion, distribucion, nombre_distribucion)
+from ..teclado_logica import (ACCIONES, ACCIONES_TEXTO, MAX_TEXTO, N_RAPIDAS, N_SUGERENCIAS, NUMEROS,
+                              PUNTUACION_PEGADA, Escritura, buscar_tecla, disposicion, distribucion,
+                              nombre_distribucion)
 from .comun import LETRA, BotonGrande, area_de_trabajo, letra, no_activar, tema
 from .textos import t
 
@@ -43,6 +57,7 @@ MAX_RETROCESOS = MAX_TEXTO
 FRASES_POR_FILA = 3
 CATEGORIAS_POR_FILA = 6
 MARGEN = 8
+SIN_CARA_FRANJA_S = 1.0        # la franja "No veo su cara" sale tras 1 s (no con cada cuadro perdido)
 
 
 class VentanaTeclado:
@@ -67,6 +82,12 @@ class VentanaTeclado:
         self._sugerencias: list[str] = []
         self._frases_visibles: dict[str, dict] = {}
         self._cats_visibles: dict[str, int] = {}
+        self._empezar_nuevo = False      # tras Hablar: la próxima letra empieza un mensaje nuevo
+        self._hwnd_mensaje = None        # modo Directo: ventana que recibió el mensaje en curso
+        self._franja_aviso = None        # (texto, hasta) aviso pasajero
+        self._franja_estado = None       # (clave, texto) mientras dure: pausa, sin cara, detenido
+        self._franja_mostrada = None     # texto que se ve ahora en la franja
+        self._detenido_mostrado = False
         self.prediccion = _obtener(app, "obtener_prediccion")
         self.frases = _obtener(app, "obtener_frases") or Frases()
         cfg = self.cfg
@@ -176,7 +197,8 @@ class VentanaTeclado:
         filas_cuerpo = None
         if self.pagina == "frases":
             filas_cuerpo = self._filas_cuerpo_frases(len(self.filas_letras))
-        self.disp = d = disposicion(self.filas_letras, ancho, alto_max, pagina=self.pagina,
+        teclas = NUMEROS if self.pagina == "numeros" else self.filas_letras
+        self.disp = d = disposicion(teclas, ancho, alto_max, pagina="frases" if self.pagina == "frases" else "letras",
                                     filas_cuerpo=filas_cuerpo)
         h = d.tecla_alto
         w = self.win = tk.Toplevel(self.root)
@@ -213,11 +235,16 @@ class VentanaTeclado:
         # texto grande (frases dichas) sobre la fila del texto
         self.lbl_grande = tk.Label(w, text="", bg=T.aviso_fondo, fg=T.aviso_texto,
                                    font=letra(cfg, 40, True, minimo=28), anchor="w", justify="left", padx=16)
+        # franja de avisos y de estado (sobre la fila de sugerencias: no tapa el texto escrito)
+        self.lbl_franja = tk.Label(w, text="", bg=T.ambar, fg=T.sobre_color, font=(LETRA, 20, "bold"),
+                                   anchor="w", justify="left", padx=16, bd=0)
         reg.ventana("teclado", w)
         no_activar(w)
         self._en_pausa = False
+        self._franja_mostrada = None
         self._pintar_todo()
         self._preparar_barrido()
+        self._actualizar_franja()
 
     def reconstruir(self):
         """Opciones guardadas (distribución, barrido, tamaño...): se rehace la ventana."""
@@ -277,6 +304,8 @@ class VentanaTeclado:
             clave = "salir_barrido"
         elif nombre == "escribir" and self._directo():
             clave = "nuevo"
+        elif nombre == "ayuda":
+            clave = "ayuda_btn"
         elif nombre == "mas_frases":
             return t("tec_mas_frases"), "▶"
         elif nombre == "mas_categorias":
@@ -322,6 +351,10 @@ class VentanaTeclado:
             self.txt.delete("1.0", "end")
             if self.confirmando:
                 self.txt.insert("end", t("tec_limpiar_pregunta"), "pendiente")
+            elif e.texto and self._empezar_nuevo:
+                # ya se dijo: se ve en gris y la próxima letra empieza un mensaje nuevo
+                self.txt.insert("end", e.texto, "guia")
+                self.txt.insert("end", "  " + t("tec_proximo_nuevo"), "pendiente")
             elif e.texto:
                 self.txt.insert("end", e.texto)
                 marca = "´" if e.tilde == 1 else ("¨" if e.tilde == 2 else ("⇧" if e.mayus else ""))
@@ -368,8 +401,16 @@ class VentanaTeclado:
         except Exception:  # noqa: BLE001
             log.exception("La predicción falló")
             sug = []
-        mayus = (e.palabra_actual()[:1].isupper()) or (not e.palabra_actual() and e.proxima_mayuscula())
+        if self._empezar_nuevo:
+            # la próxima palabra empieza un mensaje nuevo: sugerencias de inicio de frase
+            try:
+                sug = self.prediccion.sugerir("", None) if self.prediccion else []
+            except Exception:  # noqa: BLE001
+                sug = []
+        mayus = (e.palabra_actual()[:1].isupper()) or (not e.palabra_actual() and e.proxima_mayuscula()) \
+            or self._empezar_nuevo
         self._sugerencias = sug
+        tapadas = self._franja_tapa()
         for i in range(N_SUGERENCIAS):
             b = self.botones.get(f"sugerencia:{i}")
             if b is None:
@@ -379,9 +420,78 @@ class VentanaTeclado:
                 b.poner_texto(p[:1].upper() + p[1:] if mayus else p)
             else:
                 b.poner_texto("")
-            self._activar(f"sugerencia:{i}", i < len(sug))
+            self._activar(f"sugerencia:{i}", i < len(sug) and not tapadas)
         if self.barrido is not None:
             self._preparar_barrido(conservar=True)
+
+    # ------------------------------------------------------------ franja de avisos
+    def mostrar_aviso(self, texto: str, segundos: float = 6.0):
+        """Un aviso del programa mientras el teclado está abierto (tapa la ventana principal)."""
+        if not texto:
+            return
+        self._franja_aviso = (texto, _ahora() + float(segundos))
+        self._actualizar_franja()
+
+    def _franja_tapa(self) -> bool:
+        """La franja tapa las sugerencias: mientras se vea, no se pueden elegir (salvo con el barrido
+        detenido, que no avanza: así no se reinicia el barrido por cambiar las filas)."""
+        if self._franja_mostrada is None:
+            return False
+        return not (self._franja_estado is not None and self._franja_estado[0] == "detenido"
+                    and self._franja_aviso is None)
+
+    def _texto_franja(self):
+        a = self._franja_aviso
+        if a is not None:
+            if _ahora() < a[1]:
+                return a[0]
+            self._franja_aviso = None
+        if self._franja_estado is not None:
+            return self._franja_estado[1]
+        return None
+
+    def _actualizar_franja(self):
+        texto = self._texto_franja()
+        if texto == self._franja_mostrada:
+            return
+        antes = self._franja_tapa()
+        self._franja_mostrada = texto
+        fila = self.disp.fila("sugerencias") if getattr(self, "disp", None) is not None else []
+        try:
+            if texto is None or not fila:
+                self.lbl_franja.place_forget()
+            else:
+                x0, y0 = fila[0].x, fila[0].y
+                x1 = fila[-1].x + fila[-1].ancho
+                alto = fila[0].alto
+                pt = 20 if len(texto) <= 110 else 16
+                self.lbl_franja.configure(text=texto, font=(LETRA, pt, "bold"), wraplength=max(x1 - x0 - 32, 100))
+                self.lbl_franja.place(x=x0, y=y0, width=x1 - x0, height=alto)
+                self.lbl_franja.lift()
+        except (tk.TclError, AttributeError):
+            return
+        if antes != self._franja_tapa():
+            self._pintar_sugerencias()
+
+    def _estado_franja(self, vista):
+        """(clave, texto) del estado que la persona y el cuidador tienen que ver en el teclado."""
+        m = getattr(vista, "maquina", None) if vista is not None else None
+        if m is None:
+            return None
+        cam = getattr(vista, "camara", None)
+        if cam in ("NO_ABRE", "OCUPADA", "PERDIDA") and m.estado in (K.PAUSA, K.SIN_CARA):
+            return ("camara", t(f"sub_camara_{cam}"))
+        if m.estado == K.PAUSA:
+            if m.pausa_auto:
+                return ("pausa", t("sub_PAUSA_auto"))
+            if getattr(m, "reanuda_parpadeo", False):
+                return ("pausa", t("sub_PAUSA_parpadeo"))
+            return ("pausa", t("tec_pausa_reanudar"))
+        if m.estado == K.SIN_CARA and getattr(m, "sin_cara_s", 0.0) >= SIN_CARA_FRANJA_S:
+            return ("sin_cara", t("tec_sin_cara"))
+        if self._detenido_mostrado:
+            return ("detenido", t("tec_barrido_detenido"))
+        return None
 
     def mostrar_grande(self, texto: str, segundos: float = GRANDE_S):
         c = self.caja_texto
@@ -470,12 +580,15 @@ class VentanaTeclado:
                 pass
         self._volver_visible = volver
         detenido = est is not None and est.detenido
-        if detenido != getattr(self, "_detenido_mostrado", False):
+        if detenido != self._detenido_mostrado:
             self._detenido_mostrado = detenido
+            # en la franja (no encima del texto: la persona quiere leer lo que llevaba)
             if detenido:
-                self.mostrar_grande(t("tec_barrido_detenido"), 3600)
-            else:
-                self._ocultar_grande()
+                if self._franja_estado is None:
+                    self._franja_estado = ("detenido", t("tec_barrido_detenido"))
+            elif self._franja_estado is not None and self._franja_estado[0] == "detenido":
+                self._franja_estado = None
+            self._actualizar_franja()
 
     def _atender_estado_barrido(self, est):
         self._pintar_barrido(est)
@@ -505,13 +618,7 @@ class VentanaTeclado:
         if en_pausa == self._en_pausa:
             return
         self._en_pausa = en_pausa
-        # quien usa el barrido no puede elegir "Reanudar" con la cabeza: se le dice cómo seguir
-        if en_pausa and con_parpadeo:
-            self.mostrar_grande(t("sub_PAUSA_parpadeo"), 3600)
-            self._grande_pausa = True
-        elif not en_pausa and getattr(self, "_grande_pausa", False):
-            self._grande_pausa = False
-            self._ocultar_grande()
+        # cómo seguir (dos parpadeos largos, o sola al volver la cara) lo dice la franja
         b = self.botones.get("accion:pausa")
         if b is None:
             return
@@ -535,6 +642,8 @@ class VentanaTeclado:
         m0 = getattr(vista, "maquina", None) if vista is not None else None
         if m0 is not None:
             self._pintar_pausa(m0.estado == K.PAUSA, bool(getattr(m0, "reanuda_parpadeo", False)))
+        self._franja_estado = self._estado_franja(vista)
+        self._actualizar_franja()
         if self.barrido is None:
             return
         m = getattr(vista, "maquina", None) if vista is not None else None
@@ -549,7 +658,7 @@ class VentanaTeclado:
     def elegir(self, ident: str):
         if self.win is None:
             return
-        if self._grande_hasta is not None and not getattr(self, "_detenido_mostrado", False):
+        if self._grande_hasta is not None:
             self._ocultar_grande()
         try:
             if ident.startswith("tecla:"):
@@ -581,36 +690,105 @@ class VentanaTeclado:
             self._enviar_cambio(cambio)
         self._pintar_texto()
 
+    # ---- modo Directo: el texto del teclado y el del otro programa nunca se desfasan
+    def _puede_enviar(self) -> bool:
+        """¿Lo que se envíe va a llegar a otro programa? (si la ventana activa es de Lycan o de
+        administrador, la salida lo descartaría). Avisa en la franja si no."""
+        self._devolver_foco()
+        salida = getattr(self.app, "salida", None)
+        if getattr(salida, "foco_propio", False):
+            self.mostrar_aviso(t("aviso_foco_propio"), 8)
+            return False
+        revisar = getattr(salida, "revisar_destino", None)
+        try:
+            motivo = revisar() if callable(revisar) else None
+        except Exception:  # noqa: BLE001
+            motivo = None
+        if motivo == "administrador":
+            self.mostrar_aviso(t("aviso_administrador"), 8)
+            return False
+        return True
+
+    def _revisar_destino_directo(self):
+        """Si la persona eligió otra ventana después de escribir, lo que se escriba ahora es un
+        mensaje nuevo: nunca se mandan retrocesos (Borrar, Deshacer, Limpiar) a otra ventana."""
+        destino = getattr(self.app, "ultima_externa", None)
+        if self._hwnd_mensaje is not None and destino is not None and destino != self._hwnd_mensaje:
+            self.escritura.nuevo_mensaje()
+            self._hwnd_mensaje = None
+            self.mostrar_aviso(t("tec_otra_ventana"), 5)
+
+    def _operar(self, fn):
+        """Aplica una operación de ``Escritura`` (``fn() -> Cambio``). En modo Directo solo si de
+        verdad se puede enviar; si no, el texto del teclado queda como estaba. Devuelve el
+        ``Cambio`` o None si no se aplicó."""
+        if not self._directo():
+            cambio = fn()
+            self._pintar_texto()
+            return cambio
+        self._revisar_destino_directo()
+        antes = copy.deepcopy(self.escritura)
+        cambio = fn()
+        if cambio.vacio:
+            self._pintar_texto()
+            return cambio
+        if not self._puede_enviar():
+            self.escritura = antes
+            self._pintar_texto()
+            return None
+        self._enviar_cambio(cambio, foco=False)
+        if self._hwnd_mensaje is None:
+            self._hwnd_mensaje = getattr(self.app, "ultima_externa", None)
+        self._pintar_texto()
+        return cambio
+
+    def _empezar_si_toca(self, tec=None):
+        """Tras Hablar (modo Mensaje): la primera letra o sugerencia empieza un mensaje nuevo. Lo
+        anterior queda en Deshacer (y en Repetir). Un espacio, un Enter o un signo que va pegado
+        (coma, punto...) dicen lo contrario: la persona sigue con el mismo mensaje."""
+        if not self._empezar_nuevo:
+            return
+        self._empezar_nuevo = False
+        if tec is not None and (tec.tipo in ("espacio", "enter") or tec.valor in PUNTUACION_PEGADA):
+            return
+        if self.escritura.texto and not self._directo():
+            self.escritura.limpiar()
+
     def _tecla(self, ident: str):
         tec = buscar_tecla(ident)
         if tec is None:
             return
         if self.confirmando:
             self.confirmando = False
+        if tec.tipo == "pagina":
+            self.pagina = "numeros" if tec.id == "tecla:numeros" else "letras"
+            self.construir()
+            return
+        self._empezar_si_toca(tec)
         e = self.escritura
         anterior, palabra = e.palabra_anterior(), e.palabra_actual()
-        cambio = e.pulsar(tec)
+        cambio = self._operar(lambda: self.escritura.pulsar(tec))
+        if cambio is None:
+            return
         if tec.tipo in ("espacio", "enter") or (tec.tipo == "signo" and tec.valor in ".,?!"):
             if palabra and self.prediccion is not None:
                 self.prediccion.aprender_par(anterior, palabra)
-        self._aplicar(cambio)
 
     def _sugerencia(self, i: int):
         if i >= len(self._sugerencias):
             return
-        e = self.escritura
-        anterior = e.palabra_anterior()
         p = self._sugerencias[i]
-        cambio = e.elegir_sugerencia(p)
-        if self.prediccion is not None:
+        self._empezar_si_toca()
+        anterior = self.escritura.palabra_anterior()
+        cambio = self._operar(lambda: self.escritura.elegir_sugerencia(p))
+        if cambio is not None and self.prediccion is not None:
             self.prediccion.aprender_par(anterior, p)
-        self._aplicar(cambio)
 
     def _si_no(self, si: bool):
         if self.confirmando:
             self.confirmando = False
             if si:
-                self._aplicar(self.escritura.limpiar())
+                self._operar(self.escritura.limpiar)
             self._pintar_rapidas()
             self._pintar_texto()
             return
@@ -627,7 +805,10 @@ class VentanaTeclado:
             self.app.hablar(texto, urgente=urgente)
 
     def decir_frase(self, fr: dict):
-        self.decir(self._texto_frase(fr), urgente=bool(fr.get("urgente")), siempre=False)
+        # una frase urgente ("¡Ayuda, llamen a alguien!") SIEMPRE se dice, con alerta y a todo
+        # volumen, aunque el cuidador haya apagado «Decir las frases en voz alta»
+        urgente = bool(fr.get("urgente"))
+        self.decir(self._texto_frase(fr), urgente=urgente, siempre=urgente)
 
     def _aprender_ultima(self):
         e = self.escritura
@@ -636,20 +817,24 @@ class VentanaTeclado:
 
     def accion(self, nombre: str):
         e = self.escritura
-        if nombre != "limpiar" and self.confirmando and nombre not in ("pausa",):
+        if self.confirmando and nombre not in ("pausa",):
             self.confirmando = False
             self._pintar_rapidas()
+        if nombre in ("borrar", "palabra", "deshacer", "limpiar"):
+            # quiere corregir o borrar lo que se dijo: ya no empieza un mensaje nuevo solo
+            self._empezar_nuevo = False
         if nombre == "borrar":
-            self._aplicar(e.borrar())
+            self._operar(self.escritura.borrar)
         elif nombre == "palabra":
-            self._aplicar(e.borrar_palabra())
+            self._operar(self.escritura.borrar_palabra)
         elif nombre == "deshacer":
-            self._aplicar(e.deshacer())
+            self._operar(self.escritura.deshacer)
         elif nombre == "limpiar":
-            if e.texto:
-                self.confirmando = True
-                self._pintar_rapidas()
-                self._pintar_texto()
+            # sin confirmar: «Deshacer» lo recupera (a quien solo parpadea le ahorra dos elecciones)
+            if e.texto and self._operar(self.escritura.limpiar) is not None:
+                self.mostrar_aviso(t("tec_limpiado"), 4)
+        elif nombre == "ayuda":
+            self.mostrar_aviso(t("tec_ayuda"), 20)
         elif nombre == "hablar":
             texto = e.texto.strip()
             if not texto:
@@ -659,6 +844,9 @@ class VentanaTeclado:
             self.ultimo_dicho = texto
             self.app.hablar(texto)
             self._guardar_palabras()
+            if not self._directo():
+                self._empezar_nuevo = True
+                self._pintar_texto()
         elif nombre == "repetir":
             if self.ultimo_dicho:
                 self.app.hablar(self.ultimo_dicho)
@@ -715,6 +903,7 @@ class VentanaTeclado:
             if e.texto:
                 self._aprender_ultima()
                 e.nuevo_mensaje()
+                self._hwnd_mensaje = None
                 self._pintar_texto()
                 self.mostrar_grande(t("tec_nuevo_mensaje"), 3)
             return
@@ -722,13 +911,17 @@ class VentanaTeclado:
         if not texto.strip():
             self.mostrar_grande(t("tec_nada_que_decir"), 3)
             return
+        if not self._puede_enviar():
+            return                          # el aviso se ve en la franja; el texto se queda
         self._aprender_ultima()
-        self._devolver_foco()
         self.app.motor.escribir(texto)
         self._guardar_palabras()
+        self._empezar_nuevo = True
+        self._pintar_texto()
 
-    def _enviar_cambio(self, cambio):
-        self._devolver_foco()
+    def _enviar_cambio(self, cambio, foco: bool = True):
+        if foco:
+            self._devolver_foco()
         for _ in range(min(cambio.borrar, MAX_RETROCESOS)):
             self.app.orden("tecla_vk", K.VK_BACK)
         if cambio.texto:

@@ -268,8 +268,17 @@ class App:
 
     # ------------------------------------------------------------ ventanas
     def mostrar_aviso(self, texto: str, segundos: float = 6.0):
-        if self.ventana is not None and texto:
+        if not texto:
+            return
+        if self.ventana is not None:
             self.ventana.mostrar_aviso(texto, segundos)
+        # con el teclado abierto la ventana principal queda tapada: el aviso se ve en el teclado
+        tec = self.teclado
+        if tec is not None and getattr(tec, "win", None) is not None and hasattr(tec, "mostrar_aviso"):
+            try:
+                tec.mostrar_aviso(texto, segundos)
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudo mostrar el aviso en el teclado")
 
     def _ventana_viva(self, w) -> bool:
         try:

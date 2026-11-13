@@ -195,7 +195,8 @@ class Prediccion:
             if p not in frec and p.lower() not in frec:
                 frec[p] = mediana
         self.frec = frec
-        entradas = sorted((sin_tildes(p), p) for p in frec)
+        # clave plana (sin tildes y ñ -> n): "manan" encuentra "mañana" y "nin" encuentra "niño"
+        entradas = sorted((_plano(p), p) for p in frec)
         self._claves = [c for c, _ in entradas]
         self._palabras = [p for _, p in entradas]
         self._top_general = [p for p, _ in sorted(frec.items(), key=lambda x: -x[1]) if len(p) > 1][:50]
@@ -232,16 +233,23 @@ class Prediccion:
     def sugerir(self, prefijo: str, anterior: str | None = None, n: int = N_SUGERENCIAS) -> list[str]:
         """Hasta ``n`` palabras para el ``prefijo`` (sin tildes, sin importar mayúsculas).
         Sin prefijo: la siguiente palabra según los pares aprendidos (o las más usadas)."""
-        pre = sin_tildes(prefijo or "").strip()
+        estricto = sin_tildes(prefijo or "").strip()
+        pre = _plano(prefijo or "").strip()
         if not pre:
             return self._siguiente(anterior, n)
+        # si la persona sí escribió la ñ, solo las palabras con ñ ahí ("mañ" no da "mano")
+        con_ene = "ñ" in estricto
         candidatos: dict[str, float] = {}
         especiales: dict[str, float] = {}
         for k in self._rango(pre):
             p = self._palabras[k]
+            if con_ene and not sin_tildes(p).startswith(estricto):
+                continue
             candidatos[p] = self._puntaje(p, anterior)
         for p in self.usos:
-            if sin_tildes(p).startswith(pre) and p not in candidatos:
+            if p in candidatos:
+                continue
+            if (sin_tildes(p).startswith(estricto) if con_ene else _plano(p).startswith(pre)):
                 candidatos[p] = self._puntaje(p, anterior)
         escrito = (prefijo or "").lower()
         candidatos = {p: s for p, s in candidatos.items() if p.lower() != escrito}

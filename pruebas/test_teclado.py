@@ -35,7 +35,7 @@ def test_distribuciones_en_espanol():
     assert [t.valor for t in q[0]] == list("qwertyuiop")
     assert [t.valor for t in q[1]][-1] == "ñ"
     assert any(t.tipo == "tilde" for t in q[2])
-    assert sum(t.ancho for t in q[3]) == 10 and any(t.tipo == "espacio" and t.ancho == 4 for t in q[3])
+    assert sum(t.ancho for t in q[3]) == 11 and any(t.tipo == "espacio" and t.ancho == 4 for t in q[3])
     f = DISTRIBUCIONES["frecuencia"]
     assert [t.texto for t in f[0]][:7] == ["␣", "E", "A", "O", "S", "R", "N"]
     assert len(f) == 4 and all(8 <= len(r) <= 10 for r in f)
@@ -269,17 +269,16 @@ def test_teclado_escribe_habla_y_envia(app_tec):
     i = [s.lower() for s in tec._sugerencias].index("sábana")
     _elegir(app, f"sugerencia:{i}")
     assert tec.escritura.texto == "Ñandú sábana "
-    # borrar, deshacer y limpiar con confirmación
+    # borrar, deshacer y limpiar (sin confirmar desde la ronda 2: «Deshacer» lo recupera)
     _elegir(app, "accion:palabra")
     assert tec.escritura.texto == "Ñandú "
     _elegir(app, "accion:deshacer")
     assert tec.escritura.texto == "Ñandú sábana "
     _elegir(app, "accion:limpiar")
-    assert tec.confirmando and tec.escritura.texto
-    _elegir(app, "frase:no")                              # "No borrar"
-    assert not tec.confirmando and tec.escritura.texto
+    assert not tec.confirmando and tec.escritura.texto == ""
+    _elegir(app, "accion:deshacer")
+    assert tec.escritura.texto == "Ñandú sábana "
     _elegir(app, "accion:limpiar")
-    _elegir(app, "frase:si")                              # "Sí, borrar"
     assert tec.escritura.texto == ""
     # Sí y No dicen en voz alta y se muestran en grande
     _elegir(app, "frase:si")

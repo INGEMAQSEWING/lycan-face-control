@@ -372,6 +372,7 @@ TXT: dict[str, str] = {
     "tec_barrido": "Barrido",
     "tec_salir_barrido": "Salir del\nbarrido",
     "tec_pausa": "Pausa",
+    "tec_ayuda_btn": "Ayuda",
     "tec_cerrar": "Cerrar",
     "tec_si": "Sí",
     "tec_no": "No",
@@ -393,6 +394,7 @@ TXT: dict[str, str] = {
     "icono_tec_barrido": "⇄",
     "icono_tec_salir_barrido": "",
     "icono_tec_pausa": "❚❚",
+    "icono_tec_ayuda_btn": "?",
     "icono_tec_cerrar": "▼",
     "tec_limpiar_pregunta": "¿Borrar todo el texto? Elija «Sí, borrar» o «No borrar».",
     "tec_nada_que_decir": "Todavía no hay texto. Escriba algo primero.",
@@ -401,11 +403,16 @@ TXT: dict[str, str] = {
     "tec_escrito": "Lo envié al programa que estaba usando.",
     "tec_nuevo_mensaje": "Listo para un mensaje nuevo. Lo anterior se quedó en el otro programa.",
     "tec_volver": "↩ Volver",
-    "tec_barrido_detenido": "Parpadee largo para continuar.",
+    "tec_barrido_detenido": "Cierre los ojos un momento largo para continuar.",
+    "tec_sin_cara": "No veo su cara. Acérquese a la cámara o revise la luz.",
+    "tec_pausa_reanudar": "En pausa. Para seguir, quédese quieto sobre «Reanudar».",
+    "tec_proximo_nuevo": "(la próxima letra empieza un mensaje nuevo)",
+    "tec_limpiado": "Borré el texto. «Deshacer» lo recupera.",
+    "tec_otra_ventana": "Eligió otra ventana: empiezo un mensaje nuevo para no borrar nada allá.",
     "tec_solo_com_cerrar": "En «solo comunicación» el teclado se queda abierto. El cuidador lo puede cambiar en Opciones.",
-    "tec_ayuda": ("Quédese quieto sobre una tecla para escribirla. «´» pone tilde a la siguiente vocal "
-                  "(dos veces: ü). Las palabras sugeridas aparecen arriba de las letras. «Hablar» lo dice en "
-                  "voz alta y «Escribir» lo envía al programa que estaba usando."),
+    "tec_ayuda": ("Quédese quieto sobre una tecla para escribirla. «´» pone tilde a la vocal que siga "
+                  "(dos veces: ü). Con «123» aparecen los números y signos. «Hablar» lo dice en voz alta y «Escribir» "
+                  "lo envía al programa que estaba usando."),
     "aviso_frases_danadas": "Las frases rápidas estaban dañadas; volví a las de fábrica.",
     "aviso_palabras_danadas": "El archivo de palabras aprendidas estaba dañado; empecé uno nuevo.",
     "aviso_frases_no_leidas": ("No pude leer sus frases (otro programa tenía el archivo abierto); uso las de "

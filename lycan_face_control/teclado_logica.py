@@ -6,6 +6,9 @@
   diéresis (``´`` dos veces y la ``u``), mayúscula automática al empezar una frase, ``⇧`` para
   una sola mayúscula, borrar, borrar palabra, deshacer y elegir una sugerencia. Cada operación
   devuelve un ``Cambio`` (cuántos caracteres borrar y qué escribir) para el modo Directo.
+- ``NUMEROS``: página de números y signos (0-9, @, -, /, :, $, %, +...) que se abre con la tecla
+  ``123`` y se cierra con ``abc`` (ronda 2 de arreglos: sin ella no se podía escribir una hora,
+  una dosis, un teléfono o un correo).
 - ``disposicion(...)``: rectángulos de todas las filas (texto, frases rápidas, sugerencias,
   letras y acciones) dentro del área del teclado, sin solaparse y con teclas de 80 px o más.
 """
@@ -54,6 +57,8 @@ ESPACIO_CORTO = Tecla("tecla:espacio", " ", "espacio", 1, "␣")
 TILDE = Tecla("tecla:tilde", "", "tilde", 1, "´")
 ENTER = Tecla("tecla:enter", "\n", "enter", 1, "↵")
 MAYUS = Tecla("tecla:mayus", "", "mayus", 1, "⇧")
+NUMEROS_TECLA = Tecla("tecla:numeros", "", "pagina", 1, "123")
+LETRAS_TECLA = Tecla("tecla:letras", "", "pagina", 2, "abc")
 
 
 def _fila(cadena: str) -> list[Tecla]:
@@ -76,17 +81,25 @@ DISTRIBUCIONES = {
         _fila("q w e r t y u i o p"),
         _fila("a s d f g h j k l ñ"),
         _fila("z x c v b n m , . ´"),
-        [MAYUS] + _fila("¿ ? ¡ !") + [ESPACIO, ENTER],
+        [MAYUS, NUMEROS_TECLA] + _fila("¿ ? ¡ !") + [ESPACIO, ENTER],
     ],
     # Las letras más usadas del español primero (por defecto con barrido). Los signos van al final
     # de cada fila (no en una quinta fila) para que el teclado quepa en 1366×768 con teclas de 80 px.
     "frecuencia": [
-        _fila("␣ e a o s r n ."),
+        _fila("␣ e a o s r n .") + [NUMEROS_TECLA],
         _fila("i d l c t u m ,"),
         _fila("p b g v y q h ¿ ?"),
         _fila("f z j ñ x k w ´ ¡ !"),
     ],
 }
+
+# Página de números y signos (mismas 4 filas que las letras: el teclado no cambia de tamaño)
+NUMEROS = [
+    _fila("1 2 3 4 5 6 7 8 9 0"),
+    _fila("@ - / : $ % + = ( )"),
+    _fila(". , ; ? ¿ ! ¡ \" * #"),
+    [LETRAS_TECLA, ESPACIO, ENTER],
+]
 
 
 def nombre_distribucion(cfg_teclado: dict, barrido: bool) -> str:
@@ -102,7 +115,7 @@ def distribucion(nombre: str) -> list[list[Tecla]]:
 
 
 def buscar_tecla(ident: str) -> Tecla | None:
-    for filas in DISTRIBUCIONES.values():
+    for filas in list(DISTRIBUCIONES.values()) + [NUMEROS]:
         for fila in filas:
             for t in fila:
                 if t.id == ident:
@@ -184,8 +197,14 @@ class Escritura:
         return self.texto[i:]
 
     def palabra_anterior(self) -> str | None:
-        """La última palabra terminada (para predecir la siguiente). None al empezar una frase."""
+        """La última palabra terminada (para predecir la siguiente). None al empezar una frase.
+        Los signos que van pegados a la palabra (coma, punto y coma...) se saltan: después de
+        "Hola, " la palabra anterior sigue siendo "Hola"."""
         cuerpo = self.texto[:len(self.texto) - len(self.palabra_actual())].rstrip(" ")
+        if not cuerpo or cuerpo[-1] in FIN_DE_FRASE:
+            return None
+        while cuerpo and cuerpo[-1] in PUNTUACION_PEGADA and cuerpo[-1] not in FIN_DE_FRASE:
+            cuerpo = cuerpo[:-1].rstrip(" ")
         if not cuerpo or cuerpo[-1] in FIN_DE_FRASE:
             return None
         i = len(cuerpo)
@@ -226,6 +245,8 @@ class Escritura:
             self._guardar()
             self.mayus = not self.mayus
             return Cambio()
+        if tecla.tipo == "pagina":
+            return Cambio()                 # 123 / abc: solo cambia la página (la interfaz)
         if tecla.tipo == "espacio":
             return self.espacio()
         if tecla.tipo == "enter":
@@ -254,6 +275,9 @@ class Escritura:
 
     def espacio(self) -> Cambio:
         if len(self.texto) >= MAX_TEXTO:
+            return Cambio()
+        if self.espacio_auto and self.texto.endswith(" "):
+            self.espacio_auto = False       # la sugerencia ya puso el espacio: no dos seguidos
             return Cambio()
         self._guardar()
         self.tilde = 0
@@ -326,6 +350,8 @@ class Escritura:
             return Cambio()
         actual = self.palabra_actual()
         base = self.texto[:len(self.texto) - len(actual)]
+        if not actual and base and base[-1] in PUNTUACION_PEGADA:
+            base += " "                     # "Hola." + "quiero" -> "Hola. Quiero"
         self._guardar()
         mayuscula = actual[:1].isupper() or self.proxima_mayuscula(base)
         if mayuscula:
@@ -361,7 +387,7 @@ class Caja:
         return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
-ACCIONES = ("borrar", "palabra", "deshacer", "copiar", "limpiar", "frases", "barrido", "pausa", "cerrar")
+ACCIONES = ("borrar", "palabra", "deshacer", "copiar", "limpiar", "frases", "barrido", "pausa", "ayuda", "cerrar")
 ACCIONES_TEXTO = ("hablar", "repetir", "escribir")
 N_SUGERENCIAS = 5
 N_RAPIDAS = 5               # frases de la fila rápida además de Sí y No
