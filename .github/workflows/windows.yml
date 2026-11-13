@@ -1,0 +1,154 @@
+# Compila Lycan Face Control para Windows 64 bits: pruebas, PyInstaller, instalador y ZIP portable.
+# Solo corre con una etiqueta v* o a mano (workflow_dispatch). No publica nada: deja los archivos
+# como "artifacts" del run por 14 dias (el release lo arma quien publica; ver docs/decisiones.md).
+name: Lycan Face Control - Windows 64 bits
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Python 3.10 (la misma version del portatil)
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Instalar dependencias (versiones fijas)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install mediapipe==0.10.14 numpy==2.2.6 Pillow pytest
+          # mediapipe trae opencv-contrib-python 5.x (cv2.pyd de 108 MB + ffmpeg 30 MB).
+          # Se cambia por la version sin ventanas (la interfaz es tkinter): ~70 MB menos.
+          pip uninstall -y opencv-contrib-python opencv-python
+          pip install opencv-python-headless==4.10.0.84
+          # PyInstaller con el arrancador compilado aqui (menos falsos positivos de
+          # antivirus que el arrancador precompilado que comparten miles de programas).
+          pip download --no-binary pyinstaller --no-deps "pyinstaller==6.22.3" -d "$RUNNER_TEMP/pyi"
+          PYI_SRC="$(python -c "import glob, os, tarfile; d = os.path.join(os.environ['RUNNER_TEMP'], 'pyi'); t = tarfile.open(glob.glob(os.path.join(d, 'pyinstaller-*.tar.gz'))[0]); t.extractall(d, **({'filter': 'data'} if hasattr(tarfile, 'data_filter') else {})); print(os.path.join(d, t.getnames()[0].split('/')[0]))")"
+          PYI_SRC="$(cygpath -u "$PYI_SRC")"
+          rm -f "$PYI_SRC"/PyInstaller/bootloader/Windows-64bit-intel/*.exe
+          (cd "$PYI_SRC/bootloader" && python ./waf all --target-arch=64bit)
+          test -f "$PYI_SRC/PyInstaller/bootloader/Windows-64bit-intel/runw.exe"
+          pip install "$PYI_SRC"
+
+      - name: Pruebas (medidas de la cara, gestos, puntero, estados, teclado, voz; sin camara)
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -q pruebas
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(python -c "import re; print(re.search(r'VERSION\s*=\s*[\"\x27]([^\"\x27]+)', open('lycan_face_control/version.py', encoding='utf-8').read()).group(1))")
+          # VersionInfoVersion de Inno Setup solo acepta numeros: se pasa aparte la parte N.N.N
+          NUM=$(echo "$VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)
+          if [ -z "$NUM" ]; then echo "La version '$VERSION' no empieza con N.N.N"; exit 1; fi
+          # Los datos del .exe (Propiedades > Detalles) deben decir la misma version.
+          grep -q "StringStruct('FileVersion', '$NUM')" empaquetado/version_info.txt \
+            || { echo "empaquetado/version_info.txt no dice $NUM: actualicelo"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "num=$NUM" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION ($NUM)"
+
+      - name: Compilar con PyInstaller
+        shell: bash
+        run: |
+          pyinstaller empaquetado/lycan-face-control.spec --noconfirm
+          du -sh dist/LycanFaceControl/
+
+      - name: Revisar el paquete
+        shell: bash
+        run: |
+          set -x
+          D=dist/LycanFaceControl/_internal
+          test -f dist/LycanFaceControl/LycanFaceControl.exe
+          test -f $D/mediapipe/modules/face_landmark/face_landmark_front_cpu.binarypb
+          test -f $D/mediapipe/modules/face_landmark/face_landmark_with_attention.tflite
+          test -f $D/mediapipe/modules/face_detection/face_detection_short_range.tflite
+          test -f $D/recursos/palabras_es.txt
+          test -f $D/recursos/lycan-face.ico
+          test ! -d $D/jax
+          test ! -d $D/matplotlib
+
+      - name: Prueba de humo del .exe (--check)
+        shell: pwsh
+        run: |
+          # --check: valida la configuracion de fabrica y la lista de palabras, carga mediapipe
+          # FaceMesh sobre una imagen negra y sobre una cara dibujada (exige 478 puntos: prueba
+          # que los modelos de la cara vienen dentro) y lista las voces sin hablar. Sale con 0.
+          # No abre la camara ni mueve el raton (el runner no tiene camara).
+          # El .exe es "sin consola", por eso se espera con Start-Process -Wait.
+          $p = Start-Process "dist\LycanFaceControl\LycanFaceControl.exe" -ArgumentList "--check" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            $reg = "$env:APPDATA\Lycan Face Control\registros\registro.txt"
+            if (Test-Path $reg) { Get-Content $reg -Tail 60 }
+            Write-Error "El .exe fallo (codigo $($p.ExitCode))"; exit 1
+          }
+          "paquete OK"
+
+      - name: Inno Setup (instalarlo si la imagen no lo trae)
+        shell: pwsh
+        run: |
+          # windows-2025: Inno Setup no esta garantizado en esa imagen
+          # (issue actions/runner-images #11644). Si falta, se instala con Chocolatey.
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-Not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Instalador
+        shell: pwsh
+        run: |
+          # ANTES del ZIP: el LEEME de la version portable no debe quedar dentro del instalador.
+          & $env:ISCC "/DMyAppVersion=${{ steps.ver.outputs.version }}" "/DMyAppVersionNum=${{ steps.ver.outputs.num }}" "empaquetado\lycan-face-control.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: ZIP portable
+        shell: pwsh
+        run: |
+          # Copia aparte con su LEEME (la carpeta de dist queda igual a la del instalador).
+          New-Item -ItemType Directory -Force dist/portable | Out-Null
+          Copy-Item -Recurse -Force dist/LycanFaceControl dist/portable/
+          @"
+          Lycan Face Control - version portable (sin instalar)
+          Maneje el computador con la cabeza y la cara.
+
+          1. Descomprima esta carpeta donde quiera (ej. C:\LycanFaceControl\)
+          2. Doble clic en LycanFaceControl.exe
+          3. Si Windows dice "Windows protegio su PC": "Mas informacion" y
+             "Ejecutar de todas formas".
+          4. La primera vez se abre la bienvenida y la calibracion guiada.
+          5. Para el cuidador: Ctrl+Alt+Espacio pausa o reanuda en cualquier momento,
+             Ctrl+Alt+T abre el teclado y Ctrl+Alt+Fin cierra el programa.
+
+          La configuracion se guarda en %APPDATA%\Lycan Face Control.
+          Licencia MIT - Lycan Developments / EDWIN CNC.
+          "@ | Out-File dist/portable/LycanFaceControl/LEEME.txt -Encoding utf8
+          Compress-Archive -Path dist/portable/LycanFaceControl -DestinationPath "dist/Lycan-Face-Control-${{ steps.ver.outputs.version }}-portable.zip"
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Subir instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: lycan-face-control-windows
+          path: |
+            dist/Lycan-Face-Control-*.exe
+            dist/Lycan-Face-Control-*-portable.zip
+          if-no-files-found: error
+          retention-days: 14
