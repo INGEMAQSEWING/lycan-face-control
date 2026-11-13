@@ -155,6 +155,7 @@ def controles(pestana: str, gesto: str = "boca") -> list:
             ("bool", "voz.hablar_frases", "op_voz_frases", None, None),
             ("opc", "teclado.genero", "op_genero", OPCIONES["teclado.genero"], lambda v: t(f"op_genero_{v}")),
             ("bool", "teclado.solo_comunicacion", "op_solo_com", None, None),
+            ("bool", "teclado.aprender", "op_aprender", None, None),
             ("texto", "teclado.cuidador", "op_cuidador", None, None),
             ("boton", "frases", "op_editar_frases", None, None),
         ]

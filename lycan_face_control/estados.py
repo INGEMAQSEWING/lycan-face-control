@@ -37,7 +37,8 @@ ID_REANUDAR = "reanudar"
 ID_TERMINAR_DESPLAZAR = "desplazar:terminar"
 ID_BARRIDO_ELEGIR = "barrido:elegir"
 ID_BARRIDO_SIGUIENTE = "barrido:siguiente"
-IDS_REANUDAR = (ID_REANUDAR, "barra:pausa")
+ID_REANUDAR_TECLADO = "teclado:reanudar"   # el botón Pausa del teclado en pantalla, en pausa
+IDS_REANUDAR = (ID_REANUDAR, "barra:pausa", ID_REANUDAR_TECLADO)
 REANUDAR_PERMANENCIA_S = 2.0          # permanencia sobre "Reanudar" (más larga que un botón normal)
 
 ESTABLE_PARA_REANUDAR_S = 1.0         # pausa automática: cara estable 1 s para seguir

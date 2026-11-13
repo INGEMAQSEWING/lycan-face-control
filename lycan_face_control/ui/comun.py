@@ -221,7 +221,7 @@ class BotonGrande(tk.Label):
     def poner_color(self, color: str | None, texto_color: str | None = None):
         self._color = color or self.tema.boton
         self._texto_color = texto_color or (self.tema.sobre_color if color else self.tema.boton_texto)
-        self.configure(bg=self._color, fg=self._texto_color)
+        self._pintar_fondo()           # si está encendido (barrido, modo de la barra) sigue viéndose así
 
     def activo(self, si: bool):
         """Botón "encendido" (por ejemplo, el modo de clic elegido en la barra)."""

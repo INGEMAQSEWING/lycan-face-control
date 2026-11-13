@@ -63,7 +63,7 @@ FABRICA: dict = {
     "barra": {"visible": True, "posicion": "derecha", "boton_px": 96, "permanencia_s": 1.0, "modo_fijo": False},
     "teclado": {"distribucion": "auto", "permanencia_s": 1.0, "barrido": False, "barrido_paso_s": 1.5,
                 "modo_escritura": "mensaje", "letra_pt": 28, "posicion": "abajo", "genero": "neutro",
-                "cuidador": "alguien", "solo_comunicacion": False},
+                "cuidador": "alguien", "solo_comunicacion": False, "aprender": True},
     "voz": {"nombre": None, "volumen": 80, "velocidad": -1, "hablar_frases": True},
     "seguridad": {"soltar_sin_cara_ms": 300, "pausa_sin_cara_s": 10, "arrastre_max_s": 60},
     "arranque": {"al_encender": False, "estado": "auto"},

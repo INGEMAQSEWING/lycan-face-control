@@ -383,10 +383,10 @@ Todos en `ui/textos.py` (`TXT`, `t()`), con la prueba que prohíbe jerga ("landm
 
 ### 7.1 Distribuciones (`teclado_logica.py`)
 - **QWERTY español** (por defecto con permanencia): `Q W E R T Y U I O P` / `A S D F G H J K L Ñ` / `Z X C V B N M , . ´` / `¿ ? ¡ ! Espacio(ancho 4) ↵`.
-- **Frecuencia** (por defecto con barrido): `␣ E A O S R N` / `I D L C T U M` / `P B G V Y Q H` / `F Z J Ñ X K W` / `. , ¿ ? ¡ ! ´`.
+- **Frecuencia** (por defecto con barrido): `␣ E A O S R N .` / `I D L C T U M ,` / `P B G V Y Q H ¿ ?` / `F Z J Ñ X K W ´ ¡ !` (4 filas; ver decisiones, Parte 4).
 - Mayúscula automática al inicio de frase (después de `. ? !` y al empezar); tecla `⇧` opcional para una mayúscula.
 - **Tilde**: `´` deja pendiente la tilde; la siguiente vocal sale tildada (á é í ó ú); si la siguiente no es vocal, se escribe la letra sin tilde. `´` dos veces seguidas = diéresis en la siguiente u (ü).
-- Fila de acciones: **Borrar** (una letra), **Borrar palabra**, **Hablar**, **Repetir**, **Escribir** (en el programa activo), **Copiar**, **Limpiar todo** (pide confirmación: "¿Borrar todo el texto?" Sí/No), **Frases**, **Pausa**, **Cerrar teclado**.
+- Fila de acciones: **Borrar** (una letra), **Borrar palabra**, **Deshacer**, **Copiar**, **Limpiar todo** (pide confirmación: "¿Borrar todo el texto?" Sí/No), **Frases**, **Barrido**, **Pausa**, **Cerrar teclado**. **Hablar**, **Repetir** y **Escribir** (en el programa activo) van junto al texto (ver decisiones, Parte 4).
 - Teclas: mínimo 80 px, por defecto el mayor tamaño que quepa (objetivo 90 a 110 px) con separación de 8 px.
 - La lógica produce `objetivos()` = lista de `(id, rect relativo)`; la interfaz la convierte a píxeles de pantalla.
 

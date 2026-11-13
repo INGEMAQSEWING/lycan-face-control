@@ -11,12 +11,10 @@ Seguridad (sección 8):
   detección hasta 3 veces;
 - el atajo de pausa del cuidador suelta todo en el propio hilo de atajos.
 
-Para el teclado en pantalla (Parte 4): ``ui/teclado.py`` con ``VentanaTeclado(root, app)``
-(atributos/métodos opcionales: ``win``, ``cerrar()``, ``submodo_inicial()``,
-``actualizar(vista)``). Registra sus teclas en ``app.registro`` y, para identificadores sin botón
-(``barrido:...``, ``accion:...``), usa ``app.registro.manejador(prefijo, funcion)``.
-Para la voz: ``sistema/voz.py`` con ``Voz(cfg_voz)`` (``hablar(texto, urgente=False)``, ``cerrar()``)
-o una función ``hablar(texto)``.
+Teclado en pantalla (Parte 4): ``ui/teclado.py`` con ``VentanaTeclado(root, app)`` (``cerrar()``,
+``submodo_inicial()``, ``actualizar(vista)``, ``reconstruir()``). La predicción de palabras y las
+frases rápidas se cargan una vez (``obtener_prediccion``, ``obtener_frases``) y se comparten con el
+editor de frases (``abrir_editor_frases``). La voz: ``sistema/voz.py`` (``Voz(cfg_voz)``).
 """
 from __future__ import annotations
 
@@ -69,6 +67,9 @@ class App:
         self.asistente = None
         self.atajos = None
         self.voz = None
+        self.prediccion = None
+        self.frases = None
+        self.editor = None
         self.ultima_vista = None
         self.oyentes_vista: list = []
         self.cola_atajos: queue.Queue = queue.Queue()
@@ -222,7 +223,30 @@ class App:
                 self.voz.configurar(self.cfg.datos["voz"])
             except Exception:  # noqa: BLE001
                 pass
+        if self.prediccion is not None:
+            self.prediccion.aprender_activo = bool(self.cfg.datos["teclado"].get("aprender", True))
+        self._config_teclado(antes)
         self._t_descanso = time.monotonic()
+
+    def _config_teclado(self, antes: dict):
+        """Opciones del teclado cambiadas: se rehace el teclado abierto y se pone el submodo que
+        corresponde ("solo comunicación" abre el teclado y lo deja abierto)."""
+        nuevo = self.cfg.datos
+        cambio = any(antes.get(k) != nuevo.get(k) for k in ("teclado", "comodidad", "barra"))
+        solo = bool(nuevo["teclado"].get("solo_comunicacion"))
+        if self.teclado is not None:
+            if cambio and hasattr(self.teclado, "reconstruir"):
+                try:
+                    self.teclado.reconstruir()
+                except Exception:  # noqa: BLE001
+                    log.exception("No se pudo rehacer el teclado")
+            f = getattr(self.teclado, "submodo_inicial", None)
+            if f is not None and cambio:
+                self.orden("submodo", f())
+        elif solo and self.root is not None:
+            self.alternar_teclado()
+        elif bool(antes.get("teclado", {}).get("solo_comunicacion")) and not solo:
+            self.orden("submodo", K.NORMAL)
 
     def poner_al_encender(self, si: bool):
         if not self.sistema:
@@ -294,8 +318,41 @@ class App:
         if self.calibracion is c:
             self.calibracion = None
 
+    # ------------------------------------------------------------ teclado: palabras y frases
+    def obtener_prediccion(self):
+        """La predicción de palabras se carga una vez (20 000 palabras) y se comparte."""
+        if self.prediccion is None:
+            from ..prediccion import Prediccion, ruta_palabras_usuario
+            self.prediccion = Prediccion(ruta_usuario=ruta_palabras_usuario(),
+                                         aprender=bool(self.cfg.datos["teclado"].get("aprender", True)))
+            if self.prediccion.aviso:
+                self.mostrar_aviso(t(f"aviso_{self.prediccion.aviso}"), 8)
+        return self.prediccion
+
+    def obtener_frases(self):
+        if self.frases is None:
+            from ..frases import Frases, ruta_frases
+            self.frases = Frases(ruta_frases())
+            self.frases.cargar()
+            if self.frases.aviso:
+                self.mostrar_aviso(t(f"aviso_{self.frases.aviso}"), 8)
+        return self.frases
+
+    def abrir_editor_frases(self):
+        if self._ventana_viva(self.editor):
+            return self._al_frente(self.editor)
+        from .editor_frases import EditorFrases
+        self.editor = EditorFrases(self.root, self)
+        return self.editor
+
+    def editor_cerrado(self, e):
+        if self.editor is e:
+            self.editor = None
+
     def alternar_teclado(self):
         if self.teclado is not None:
+            if self.cfg.datos["teclado"].get("solo_comunicacion"):
+                return self._al_frente(self.teclado)     # en "solo comunicación" nunca se cierra
             self.cerrar_teclado()
             return
         try:
@@ -457,6 +514,8 @@ class App:
             prueba = float(getattr(self.args, "prueba_segundos", 0) or 0)
             if self.cfg.datos.get("primera_vez") and not prueba:
                 self.root.after(700, self.abrir_asistente)
+            elif self.cfg.datos["teclado"].get("solo_comunicacion"):
+                self.root.after(500, self.alternar_teclado)        # el teclado siempre abierto
             if prueba:
                 self.root.after(int(prueba * 1000), self.salir_seguro)
             self.root.mainloop()
@@ -683,6 +742,11 @@ class App:
                 self.atajos.detener()
             except Exception:  # noqa: BLE001
                 pass
+        if self.prediccion is not None:
+            try:
+                self.prediccion.guardar()
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudieron guardar las palabras aprendidas")
         if self.voz is not None and hasattr(self.voz, "cerrar"):
             try:
                 self.voz.cerrar()

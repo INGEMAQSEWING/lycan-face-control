@@ -206,6 +206,28 @@ def traer_al_frente(titulo: str) -> bool:
     return False
 
 
+user32.IsWindow.argtypes = (wt.HWND,)
+user32.IsWindow.restype = wt.BOOL
+user32.IsIconic.argtypes = (wt.HWND,)
+user32.IsIconic.restype = wt.BOOL
+
+
+def devolver_foco(hwnd) -> bool:
+    """Devuelve el foco a la ventana de otro programa (antes de escribir desde el teclado en
+    pantalla). True si quedó al frente. Nunca envía teclas para forzarlo."""
+    if not hwnd or not user32.IsWindow(hwnd):
+        return False
+    if ventana_activa() == hwnd:
+        return True
+    try:
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+    except OSError:
+        return False
+    return ventana_activa() == hwnd
+
+
 def reiniciar_como_admin(argumentos: list[str] | None = None) -> bool:
     """Vuelve a abrir el programa como administrador (aparece el aviso de Windows)."""
     shell32 = ctypes.WinDLL("shell32")
