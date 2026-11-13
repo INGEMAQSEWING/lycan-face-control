@@ -1,0 +1,6 @@
+# Ejecución (versiones fijas: ver docs/especificacion.md sección 14)
+mediapipe==0.10.14
+numpy==2.2.6
+opencv-python-headless==4.10.0.84
+Pillow
+# tkinter, ctypes y winsound vienen con Python. NO se usan pynput, pyautogui, pywin32, comtypes ni pyttsx3.
