@@ -106,3 +106,23 @@ def test_barrido_temporal_si_deja_salir(app_tec):  # noqa: F811
     _girar(app, 300)
     todos = {i for f in app.teclado.filas_barrido() for i in f}
     assert "accion:barrido" in todos
+
+
+def test_en_pausa_con_barrido_el_teclado_dice_como_seguir(app_tec):  # noqa: F811
+    from lycan_face_control import constantes as K
+    from lycan_face_control.ui.textos import t
+    app = app_tec
+    app.cfg.datos["teclado"]["barrido"] = True
+    app.orden("config", app.cfg.datos)
+    _girar(app, 300)
+    app.alternar_teclado()
+    _girar(app, 300)
+    app.orden("pausar", "botón Pausar")
+    assert _esperar(app, lambda: app.motor.maquina.estado == K.PAUSA)
+    _girar(app, 200)
+    assert app.teclado.lbl_grande.cget("text") == t("sub_PAUSA_parpadeo")
+    assert app.teclado.lbl_grande.winfo_ismapped()
+    app.orden("reanudar", "prueba")
+    assert _esperar(app, lambda: app.motor.maquina.estado == K.ACTIVO)
+    _girar(app, 200)
+    assert not app.teclado.lbl_grande.winfo_ismapped()

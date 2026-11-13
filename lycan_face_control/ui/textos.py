@@ -258,7 +258,8 @@ TXT: dict[str, str] = {
     "op_si": "Sí",
     "op_no": "No",
     "op_velocidad": "Velocidad del puntero",
-    "op_velocidad_ayuda": "1 = lento (hay que mover más la cabeza); 10 = rápido (basta un movimiento pequeño).",
+    "op_velocidad_ayuda": ("1 = un poco más lento; 10 = rápido (basta un movimiento pequeño). Con cualquier "
+                           "valor se llega a toda la pantalla girando la cabeza dentro de su rango cómodo."),
     "op_suavidad": "Suavidad (quita el temblor)",
     "op_modo": "Forma de mover el puntero",
     "op_modo_absoluto": "Directo",
@@ -273,7 +274,7 @@ TXT: dict[str, str] = {
     "op_perm_recuperacion": "Espera entre un clic y otro",
     "op_perm_sonido": "Sonido al hacer clic",
     "op_barra_tiempo": "Tiempo para elegir un botón",
-    "op_barra_fijo": "El modo de la barra se queda puesto",
+    "op_barra_fijo": "Después de un doble clic o clic derecho, seguir en ese modo",
     "op_barra_fijo_ayuda": "Si dice «No», después de un doble clic o un clic derecho vuelve solo al clic normal.",
     "op_gesto_activo": "Encendido",
     "op_gesto_sens": "Sensibilidad",

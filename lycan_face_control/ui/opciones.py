@@ -212,12 +212,60 @@ def ciclar(opciones, actual, signo: int):
     return opciones[(i + signo) % len(opciones)]
 
 
+# Ayuda corta que se ve debajo del nombre de algunos controles
+AYUDAS_CONTROL = {"puntero.sens_x": "op_velocidad_ayuda", "barra.modo_fijo": "op_barra_fijo_ayuda"}
+
+
+def _al_encender_real(app) -> bool | None:
+    """Si el programa abre al encender según el registro de Windows (None si no se puede saber)."""
+    if not getattr(app, "sistema", False):
+        return None
+    try:
+        from ..sistema import inicio
+        return bool(inicio.activo())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def atajos_validos(atajos: dict, revisar_teclado: bool = True) -> str | None:
+    """Texto del primer problema de los atajos (o None): que se entienda, que no esté repetido y
+    que no escriba una letra con el teclado de la persona (AltGr). Mismos textos que los atajos."""
+    try:
+        from ..sistema.atajos import AtajoInvalido, interpretar, produce_caracter, texto_repetido
+    except Exception:  # noqa: BLE001
+        return None
+    usados: dict = {}
+    for nombre, texto in atajos.items():
+        try:
+            combo = interpretar(texto)
+        except AtajoInvalido as e:
+            return t("op_atajo_invalido", texto=texto, motivo=str(e))
+        except Exception:  # noqa: BLE001
+            return t("op_atajo_invalido", texto=texto, motivo="")
+        if combo in usados:
+            return texto_repetido(texto, usados[combo])
+        usados[combo] = nombre
+        if revisar_teclado:
+            try:
+                car = produce_caracter(*combo)
+            except Exception:  # noqa: BLE001
+                car = None
+            if car:
+                return t("op_atajo_invalido", texto=texto, motivo=f"escribe «{car}» en su teclado")
+    return None
+
+
 class VentanaOpciones:
     def __init__(self, root, app):
         self.root = root
         self.app = app
         self.original = copy.deepcopy(app.cfg.datos)
         self.datos = copy.deepcopy(app.cfg.datos)
+        # "Abrir al encender": lo que manda es el registro de Windows (el instalador también lo pone)
+        real = _al_encender_real(app)
+        if real is not None:
+            self.original["arranque"]["al_encender"] = real
+            self.datos["arranque"]["al_encender"] = real
         self.pestana = "puntero"
         self.gesto = "boca"
         self.pagina = 0
@@ -337,9 +385,18 @@ class VentanaOpciones:
         T = self.tema
         fila = tk.Frame(self.cuerpo, bg=T.fondo_2)
         fila.pack(fill="x", pady=3)
-        tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
-                 wraplength=int(self.W * 0.42), justify="left").pack(side="left", padx=10, pady=6, fill="x",
-                                                                    expand=True)
+        ayuda = AYUDAS_CONTROL.get(ruta)
+        if ayuda:
+            izq = tk.Frame(fila, bg=T.fondo_2)
+            izq.pack(side="left", padx=10, pady=4, fill="x", expand=True)
+            tk.Label(izq, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
+                     wraplength=int(self.W * 0.42), justify="left").pack(fill="x")
+            tk.Label(izq, text=t(ayuda), bg=T.fondo_2, fg=T.texto_suave, font=self._f(13, False), anchor="w",
+                     wraplength=int(self.W * 0.42), justify="left").pack(fill="x")
+        else:
+            tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
+                     wraplength=int(self.W * 0.42), justify="left").pack(side="left", padx=10, pady=6, fill="x",
+                                                                        expand=True)
         if tipo in ("num", "vel"):
             self._boton(fila, "+", f"op:{ruta}:mas", lambda: self.cambiar(ctl, +1), ancho=3).pack(side="right",
                                                                                                 padx=6, pady=4)
@@ -497,18 +554,7 @@ class VentanaOpciones:
 
     # ------------------------------------------------------------ cerrar
     def _atajos_validos(self) -> str | None:
-        try:
-            from ..sistema.atajos import AtajoInvalido, interpretar
-        except Exception:  # noqa: BLE001
-            return None
-        for nombre, texto in self.datos.get("atajos", {}).items():
-            try:
-                interpretar(texto)
-            except AtajoInvalido as e:
-                return t("op_atajo_invalido", texto=texto, motivo=str(e))
-            except Exception:  # noqa: BLE001
-                return t("op_atajo_invalido", texto=texto, motivo="")
-        return None
+        return atajos_validos(self.datos.get("atajos", {}), bool(getattr(self.app, "sistema", False)))
 
     def guardar(self):
         error = self._atajos_validos()
@@ -518,10 +564,9 @@ class VentanaOpciones:
             self._armar()
             return
         datos = validar(copy.deepcopy(self.datos))
-        al_encender_antes = bool(self.original["arranque"].get("al_encender"))
         self.app.aplicar_config(datos, self.original)
-        if bool(datos["arranque"].get("al_encender")) != al_encender_antes or datos["arranque"].get("al_encender"):
-            self.app.poner_al_encender(bool(datos["arranque"].get("al_encender")))
+        # siempre, haya cambiado o no: así la casilla y el registro de Windows quedan iguales
+        self.app.poner_al_encender(bool(datos["arranque"].get("al_encender")))
         self.app.mostrar_aviso(t("op_guardado"), 4)
         self._cerrar()
 

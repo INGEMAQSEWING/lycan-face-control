@@ -126,20 +126,20 @@ jobs:
           New-Item -ItemType Directory -Force dist/portable | Out-Null
           Copy-Item -Recurse -Force dist/LycanFaceControl dist/portable/
           @"
-          Lycan Face Control - version portable (sin instalar)
+          Lycan Face Control - versión portable (sin instalar)
           Maneje el computador con la cabeza y la cara.
 
-          1. Descomprima esta carpeta donde quiera (ej. C:\LycanFaceControl\)
+          1. Descomprima esta carpeta donde quiera (por ejemplo, C:\LycanFaceControl\)
           2. Doble clic en LycanFaceControl.exe
-          3. Si Windows dice "Windows protegio su PC": "Mas informacion" y
-             "Ejecutar de todas formas".
-          4. La primera vez se abre la bienvenida y la calibracion guiada.
+          3. Si Windows dice "Windows protegió su PC", elija "Más información" y luego
+             "Ejecutar de todas formas" (el programa no tiene firma digital).
+          4. La primera vez se abre la bienvenida y la calibración guiada (unos dos minutos).
           5. Para el cuidador: Ctrl+Alt+Espacio pausa o reanuda en cualquier momento,
              Ctrl+Alt+T abre el teclado y Ctrl+Alt+Fin cierra el programa.
 
-          La configuracion se guarda en %APPDATA%\Lycan Face Control.
+          La configuración se guarda en %APPDATA%\Lycan Face Control.
           Licencia MIT - Lycan Developments / EDWIN CNC.
-          "@ | Out-File dist/portable/LycanFaceControl/LEEME.txt -Encoding utf8
+          "@ | Out-File dist/portable/LycanFaceControl/LEEME.txt -Encoding utf8BOM
           Compress-Archive -Path dist/portable/LycanFaceControl -DestinationPath "dist/Lycan-Face-Control-${{ steps.ver.outputs.version }}-portable.zip"
           Get-ChildItem dist | Format-Table Name, Length
 

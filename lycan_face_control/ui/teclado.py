@@ -499,12 +499,19 @@ class VentanaTeclado:
         return True
 
     # ------------------------------------------------------------ cada refresco
-    def _pintar_pausa(self, en_pausa: bool):
+    def _pintar_pausa(self, en_pausa: bool, con_parpadeo: bool = False):
         """En pausa el botón "Pausa" del teclado se vuelve "Reanudar" (el teclado puede tapar la
         ventana principal): es el objetivo ``teclado:reanudar`` que atiende la máquina (2 s quieto)."""
         if en_pausa == self._en_pausa:
             return
         self._en_pausa = en_pausa
+        # quien usa el barrido no puede elegir "Reanudar" con la cabeza: se le dice cómo seguir
+        if en_pausa and con_parpadeo:
+            self.mostrar_grande(t("sub_PAUSA_parpadeo"), 3600)
+            self._grande_pausa = True
+        elif not en_pausa and getattr(self, "_grande_pausa", False):
+            self._grande_pausa = False
+            self._ocultar_grande()
         b = self.botones.get("accion:pausa")
         if b is None:
             return
@@ -527,7 +534,7 @@ class VentanaTeclado:
             self._ocultar_grande()
         m0 = getattr(vista, "maquina", None) if vista is not None else None
         if m0 is not None:
-            self._pintar_pausa(m0.estado == K.PAUSA)
+            self._pintar_pausa(m0.estado == K.PAUSA, bool(getattr(m0, "reanuda_parpadeo", False)))
         if self.barrido is None:
             return
         m = getattr(vista, "maquina", None) if vista is not None else None

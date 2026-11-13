@@ -42,6 +42,8 @@ REFRESCO_MS = 33
 PUBLICAR_CADA_S = 0.25
 MOTOR_CAIDO_S = 2.0
 MAX_REINICIOS = 3
+REINICIOS_VENTANA_S = 300.0     # se rinde con 3 reinicios en 5 minutos (no en toda la sesión)
+GUARDAR_PALABRAS_S = 300.0      # las palabras aprendidas se guardan cada 5 minutos si cambiaron
 AVISOS_POR_VUELTA = 60
 # avisos que no se muestran (o que ya se ven en el estado grande)
 AVISOS_CALLADOS = {"pausa", "activo", "teclado", "sobre_ventana", "arrastre_fin"}
@@ -74,6 +76,9 @@ class App:
         self.oyentes_vista: list = []
         self.cola_atajos: queue.Queue = queue.Queue()
         self.reinicios = 0
+        self._t_reinicios: list = []           # cuándo fue cada reinicio (ventana de 5 min)
+        self._t_ult_vuelta = None              # última vuelta de la interfaz (para notar suspensión)
+        self._t_guardar_palabras = time.monotonic()
         self.motor_rendido = False
         self.ultima_externa = None
         self._t_ult_vista = time.monotonic()
@@ -505,6 +510,13 @@ class App:
         self.indicador = IndicadorCursor(self.root, self)
         self.borde = BordeEstado(self.root, self)
         self.flotante = ReanudarFlotante(self.root, self)
+        # errores dentro de callbacks de tkinter (after, command, bind): al registro y a pausa
+        self.root.report_callback_exception = self._error_en_callback
+        # Windows avisa que se apaga o se cierra la sesión: guardar rápido (no siempre llega a finalizar)
+        try:
+            self.root.protocol("WM_SAVE_YOURSELF", self._al_apagar_windows)
+        except Exception:  # noqa: BLE001
+            pass
         if self.cfg.aviso:
             self.mostrar_aviso(self.cfg.aviso, 10)
         if registro_mod.ERROR:
@@ -550,6 +562,12 @@ class App:
 
     def vuelta_interfaz(self):
         """Una vuelta del hilo de la interfaz (las pruebas la llaman directamente)."""
+        ahora0 = time.monotonic()
+        if self._t_ult_vuelta is not None and ahora0 - self._t_ult_vuelta > MOTOR_CAIDO_S:
+            # la interfaz misma estuvo parada (el computador se suspendió): no es el motor caído
+            log.info("La interfaz estuvo parada %.1f s (suspensión?)", ahora0 - self._t_ult_vuelta)
+            self._t_ult_vista = ahora0
+        self._t_ult_vuelta = ahora0
         while True:
             try:
                 self._atender_atajo(self.cola_atajos.get_nowait())
@@ -574,6 +592,7 @@ class App:
             self.registro.publicar()
             self._revisar_foco()
             self._revisar_descanso(ahora)
+            self._guardar_palabras_cada_tanto(ahora)
         self._vigilar_motor(ahora)
 
     def _pintar(self, v):
@@ -691,13 +710,16 @@ class App:
         if not caido:
             return
         self._soltar_seguro("motor caído")
-        if self.reinicios >= MAX_REINICIOS:
+        self._t_reinicios = [x for x in self._t_reinicios if ahora - x < REINICIOS_VENTANA_S]
+        if len(self._t_reinicios) >= MAX_REINICIOS:
             self.motor_rendido = True
             log.error("El motor no se pudo reiniciar")
             self.mostrar_aviso(t("aviso_motor_rendido"), 30)
             return
         self.reinicios += 1
-        log.warning("El motor no responde: reinicio %d de %d", self.reinicios, MAX_REINICIOS)
+        self._t_reinicios.append(ahora)
+        log.warning("El motor no responde: reinicio %d (%d en los últimos 5 minutos, máximo %d)",
+                    self.reinicios, len(self._t_reinicios), MAX_REINICIOS)
         self.mostrar_aviso(t("aviso_motor_caido"), 8)
         try:
             m.detener()
@@ -709,6 +731,48 @@ class App:
         self.motor.orden("pausar", "reinicio")
         self._t_ult_vista = ahora
         self.registro.publicar(forzar=True)
+
+    def _error_en_callback(self, tipo, valor, traza):
+        log.error("Error en la interfaz", exc_info=(tipo, valor, traza))
+        try:
+            self._al_fallar(valor)
+        except Exception:  # noqa: BLE001
+            log.exception("Tampoco se pudo pausar tras el error de la interfaz")
+
+    def guardar_rapido(self, motivo: str = ""):
+        """Suelta todo y guarda configuración, palabras y frases, sin cerrar ventanas."""
+        self._soltar_seguro(motivo or "guardar")
+        try:
+            if self.ventana is not None:
+                x, y = self.ventana.posicion()
+                self.cfg.datos["ventana"]["x"], self.cfg.datos["ventana"]["y"] = int(x), int(y)
+        except Exception:  # noqa: BLE001
+            pass
+        for obj, metodo in ((self.prediccion, "guardar"),):
+            try:
+                if obj is not None:
+                    getattr(obj, metodo)()
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudo guardar al apagar")
+        try:
+            if not self.cfg.solo_lectura:
+                self.guardar_config()
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo guardar la configuración al apagar")
+
+    def _al_apagar_windows(self):
+        log.info("Windows se apaga o cierra la sesión: se guarda todo")
+        self.guardar_rapido("apagado de Windows")
+
+    def _guardar_palabras_cada_tanto(self, ahora: float):
+        if ahora - self._t_guardar_palabras < GUARDAR_PALABRAS_S:
+            return
+        self._t_guardar_palabras = ahora
+        if self.prediccion is not None:
+            try:
+                self.prediccion.guardar()
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudieron guardar las palabras aprendidas")
 
     def salir_seguro(self):
         if self.cerrando:

@@ -289,6 +289,14 @@ class VentanaCalibracion:
             self._loop = self.win.after(REFRESCO_MS, self._refrescar)
         except tk.TclError:
             pass
+        except Exception:  # noqa: BLE001
+            # un error inesperado no puede dejar la máquina en CALIBRANDO para siempre (sin tope)
+            log.exception("Error en la calibración: se cancela y se vuelve a lo de antes")
+            try:
+                self.cancelar()
+            except Exception:  # noqa: BLE001
+                log.exception("Tampoco se pudo cancelar la calibración")
+                self.app.orden("calibrar", False)
 
     def _pintar(self, est):
         T = self.tema
