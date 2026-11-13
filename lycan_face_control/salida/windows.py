@@ -79,6 +79,8 @@ if sys.platform == "win32":
     user32.GetCursorPos.restype = wt.BOOL
     user32.MapVirtualKeyW.argtypes = (wt.UINT, wt.UINT)
     user32.MapVirtualKeyW.restype = wt.UINT
+    user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+    user32.GetAsyncKeyState.restype = ctypes.c_short
     user32.GetDoubleClickTime.restype = wt.UINT
 else:  # pragma: no cover
     user32 = None
@@ -168,6 +170,18 @@ class SalidaWindows(SalidaBase):
         except OSError:
             pass
         return super()._limitar(x, y)
+
+    def _botones_presionados_en_windows(self) -> list:
+        # GetAsyncKeyState mira el botón físico; construir() invierte izq/der si los botones
+        # están intercambiados, así que se devuelve el nombre que llega a ese botón físico
+        inv = getattr(self, "invertidos", False)
+        out = []
+        for vk, b in ((0x01, "izq"), (0x02, "der"), (0x04, "medio")):
+            if user32.GetAsyncKeyState(vk) & 0x8000:
+                if inv and b in ("izq", "der"):
+                    b = "der" if b == "izq" else "izq"
+                out.append(b)
+        return out
 
     def posicion_cursor(self):
         p = wt.POINT()

@@ -40,6 +40,10 @@ Reglas:
   ``SACUDIDA_VENTANA_S``) no cuenta; y una boca abierta con los dos ojos **entrecerrados** (bajo
   el umbral de "abierto") al menos ``ENTRECERRADOS_S`` tampoco (tos, risa y bostezo achinan los
   ojos; abrir la boca a propósito no).
+- Hablar (ronda 3 de arreglos): la boca que abre y cierra 2 veces o más en ``HABLA_VENTANA_S``
+  (aunque cada apertura sea corta y no llegue al umbral del gesto de boca) quiere decir que la
+  persona está hablando: un tramo de cejas o sonrisa en ese momento no cuenta (al preguntar o al
+  sorprenderse se levantan las cejas).
 - Tope del gesto largo: un tramo de más de ``largo + 3 s`` es un bostezo o un descanso y no da
   ``GestoLargo``.
 - ``ResultadoGestos.soltados`` trae un ``GestoSoltado(nombre, duracion_ms)`` por cada tramo válido
@@ -74,6 +78,9 @@ SACUDIDA_VENTANA_S = 0.3                      # sacudida de la cabeza: cambio de
 SACUDIDA_POSE = 0.07                          # ...mayor que esto (≈ 7°): tos, estornudo, risa fuerte
 LARGO_EXTRA_S = 3.0                           # un gesto largo de más de largo + 3 s no cuenta
 DOBLE_PARPADEO_S = 2.5
+HABLA_ENTRA, HABLA_SALE = 0.10, 0.06          # apertura de boca al hablar: MAR > base + 0,10 (sale bajo + 0,06)
+HABLA_VENTANA_S = 1.5                         # 2 aperturas o más en esta ventana = está hablando
+HABLA_ANTES_S = 0.7                           # cuentan las aperturas desde 0,7 s antes del tramo
 NOMBRES = ("boca", "cejas", "sonrisa")
 
 
@@ -223,6 +230,8 @@ class Gestos:
         self._t_prev = None
         self._soltados: list = []
         self._pose: list = []          # (t, yaw_n, pitch_n) de los últimos cuadros (sacudidas)
+        self._boca_habla = False       # la boca está abierta "de hablar" (umbral bajo)
+        self._aperturas: list = []     # momentos en que la boca se abrió (hablar)
         self._reiniciar_parpadeo()
         self._t_ultimo_largo = None
 
@@ -303,6 +312,8 @@ class Gestos:
         self._recien_vuelta = True
         self._t_prev = None
         self._pose = []
+        self._boca_habla = False
+        self._aperturas = []
 
     def actualizar(self, m, t: float) -> ResultadoGestos:
         res = ResultadoGestos()
@@ -319,6 +330,7 @@ class Gestos:
         rd, ri = self._proporciones(m)
         entrecerrados = _finito(rd) and _finito(ri) and rd < self.abierto and ri < self.abierto
         self._guardar_pose(m, t)
+        self._guardar_habla(m, t)
         self._soltados = []
         eventos: list = []
         activos = set()
@@ -338,6 +350,9 @@ class Gestos:
                     g.necesita_reposo = True
             if g.t_tramo is not None and not g.consumido and self._sacudida(g.t_tramo, t):
                 g.consumido = True                # la cabeza se sacudió (tos, estornudo)
+                g.necesita_reposo = True
+            if nombre != "boca" and g.t_tramo is not None and not g.consumido and self._hablando(g.t_tramo, t):
+                g.consumido = True                # está hablando: cejas al preguntar, no un clic
                 g.necesita_reposo = True
             self._paso_gesto(g, s, t, eventos)
             if g.fuera_de_reposo:
@@ -362,6 +377,24 @@ class Gestos:
         corte = t - 2.0 * SACUDIDA_VENTANA_S
         while self._pose and self._pose[0][0] < corte:
             self._pose.pop(0)
+
+    def _guardar_habla(self, m, t: float):
+        mar = getattr(m, "mar", None)
+        if _finito(mar):
+            b = self.base["mar"]
+            if not self._boca_habla and mar > b + HABLA_ENTRA:
+                self._boca_habla = True
+                self._aperturas.append(t)
+            elif self._boca_habla and mar < b + HABLA_SALE:
+                self._boca_habla = False
+        corte = t - HABLA_VENTANA_S - HABLA_ANTES_S - 0.5
+        while self._aperturas and self._aperturas[0] < corte:
+            self._aperturas.pop(0)
+
+    def _hablando(self, t_tramo: float, t: float) -> bool:
+        """¿La boca abrió 2 veces o más en la última ventana (desde poco antes del tramo)?"""
+        desde = max(t - HABLA_VENTANA_S, t_tramo - HABLA_ANTES_S) - 1e-9
+        return sum(1 for ta in self._aperturas if ta >= desde) >= 2
 
     def _sacudida(self, t_tramo: float, t: float) -> bool:
         """¿La cabeza se sacudió durante el tramo? Solo cuentan los cuadros del propio tramo (el

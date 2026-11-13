@@ -30,7 +30,11 @@ class SalidaSimulada(SalidaBase):
         self.al_enviar = al_enviar       # callback(lista_eventos) para mostrar en pantalla
         self.violaciones: list[str] = []
         self.llamadas = 0
+        self.presionados_windows: list = []   # simula botones que quedaron abajo en Windows
         self._lock_ev = threading.Lock()
+
+    def _botones_presionados_en_windows(self) -> list:
+        return list(self.presionados_windows)
 
     def posicion_cursor(self):
         return self.cursor

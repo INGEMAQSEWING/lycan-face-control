@@ -100,6 +100,11 @@ class App:
             salida = crear(self.simulada)
         self.salida = salida
         self._fabrica_motor = fabrica_motor or self._motor_normal
+        # un botón que quedó abajo de una sesión cerrada a la fuerza se suelta antes de empezar
+        try:
+            self.salida.soltar_botones_huerfanos("arranque")
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudieron revisar los botones al arrancar")
         atexit.register(self._soltar_seguro, "atexit")
         if sistema:
             for nombre in ("SIGINT", "SIGBREAK", "SIGTERM"):
@@ -746,6 +751,7 @@ class App:
                 return
             if viejo.is_alive():
                 log.warning("El motor anterior no terminó en %.0f s; se crea otro igual", ESPERA_MOTOR_VIEJO_S)
+                self._apagar_camara(viejo)
             self._motor_viejo = None
             self._arrancar_motor_nuevo(ahora)
             return
@@ -811,9 +817,24 @@ class App:
         except Exception:  # noqa: BLE001
             vivo = False
         if vivo:
+            # trabado: su cámara solo se apagaría al final de su run(); se apaga ya para que el
+            # motor nuevo pueda abrir el aparato (ronda 3)
+            self._apagar_camara(m)
             self._motor_viejo = (m, ahora)      # se crea el nuevo cuando el viejo termine
             return
         self._arrancar_motor_nuevo(ahora)
+
+    @staticmethod
+    def _apagar_camara(m):
+        cam = getattr(m, "camara", None)
+        if cam is None:
+            return
+        try:
+            cam.detener()
+            if hasattr(cam, "join"):
+                cam.join(timeout=1.0)
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo apagar la cámara del motor anterior")
 
     def _arrancar_motor_nuevo(self, ahora: float):
         self.motor = self._crear_motor()

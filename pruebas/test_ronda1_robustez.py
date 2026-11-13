@@ -164,7 +164,7 @@ def test_cambio_de_monitor_rehace_el_mapeo_sin_perder_la_calibracion():
     assert s.maquina.calibracion is not None
     s.salida.escritorio = (0, 0, 1920, 1080)
     # mirar muy a la derecha y abajo: ahora llega más allá de la pantalla vieja
-    s.quieto(1.5, yaw_n=0.2, pitch_n=0.8)
+    s.quieto(1.5, yaw_n=0.12, pitch_n=0.66)   # dentro del rango cómodo (más allá = "mirando a otro lado")
     x, y = s.maquina.puntero.posicion
     assert x > 1366 and y > 768
     assert acc

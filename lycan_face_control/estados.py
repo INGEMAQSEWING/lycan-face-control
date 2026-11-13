@@ -39,6 +39,17 @@ ID_BARRIDO_ELEGIR = "barrido:elegir"
 ID_BARRIDO_SIGUIENTE = "barrido:siguiente"
 ID_REANUDAR_TECLADO = "teclado:reanudar"   # el botón Pausa del teclado en pantalla, en pausa
 IDS_REANUDAR = (ID_REANUDAR, "barra:pausa", ID_REANUDAR_TECLADO)
+# Botones que pausan (en el teclado y en la ventana principal): al reanudar quedan bloqueados hasta
+# que el puntero salga de ellos (si no, quien reanuda quieto encima vuelve a pausar).
+IDS_PAUSA = ("accion:pausa", "ui:pausar", "barra:pausa")
+# La interfaz publica el botón nuevo (Pausa <-> Reanudar) unos cuadros después del cambio de estado:
+# un bloqueo de un botón que todavía no aparece se guarda este tiempo (ronda 3).
+BLOQUEO_AUSENTE_S = 3.0
+# "Mirando a otro lado" (ronda 3): la cabeza muy por fuera de su rango cómodo calibrado (al
+# cuidador, a la televisión, a comer). El puntero se congela, la permanencia se desarma y los
+# gestos de clic no cuentan (la pausa sí). En unidades del rango cómodo (1 = extremo calibrado).
+U_AFUERA = 1.6
+U_AFUERA_VUELVE = 1.35                # histéresis: para volver hay que entrar claramente
 REANUDAR_PERMANENCIA_S = 2.0          # permanencia sobre "Reanudar" (más larga que un botón normal)
 REANUDAR_VENTANA_S = 2.5              # el gesto de reanudar vale si se suelta entre reanudar_ms y +2,5 s
 # Pausas puestas por el cuidador (atajo, ratón, Opciones): ningún gesto de la cara las quita (un
@@ -53,6 +64,13 @@ CARA_ESTABLE_S = 1.0                  # tras un salto: 1 s de cara estable antes
 # cuadro anterior, que no tenía cara): alguien que se cruza delante de la cámara deja casi
 # siempre uno o varios cuadros sin cara antes de que FaceMesh siga a la otra persona.
 HUECO_CORTO_S = 2.0                   # con un hueco más corto se avisa "otra cara" (como sin hueco)
+# Huella de la cara de la persona (ronda 3): tamaño (distancia entre ojos en px) y proporciones
+# estables (cejas y ancho de la boca respecto a la distancia entre ojos), aprendidas despacio
+# mientras la cara es de confianza. Tras un salto de cara, si la cara nueva no se parece a la
+# huella, se pausa ("otra cara") hasta que vuelva una cara compatible o la persona elija Reanudar.
+HUELLA_TOL = {"io": 0.20, "cejas": 0.15, "sonrisa": 0.15}
+HUELLA_ALFA = 0.02                    # por cuadro (≈ 2,5 s de constante de tiempo a 20 cuadros/s)
+MOTIVO_OTRA_CARA = "otra_cara"
 # El puntero se desliza solo hasta su posición nueva tras recentrar, cambiar una opción, reanudar
 # o volver la cara: ese deslizamiento no es "moverse a propósito" y no arma la permanencia.
 DESARMAR_TRAS_DESLIZAR_S = MEZCLA_REENTRADA_S + 0.3
@@ -101,6 +119,7 @@ class Vista:
     medidas: object = None
     objetivo: str | None = None
     reanuda_parpadeo: bool = False              # en pausa: dos parpadeos largos reanudan
+    mirando_afuera: bool = False                # la cabeza está muy fuera de su rango cómodo
 
 
 @dataclass
@@ -144,13 +163,15 @@ class Maquina:
         self._obj_actual = None
         self.objetivos: list = []
         self._errores: deque = deque()
-        self._bloqueados: set = set()           # botones ignorados hasta que el puntero salga de ellos
+        self._bloqueados: dict = {}             # id -> t: botones ignorados hasta que el puntero salga de ellos
+        self._afuera = False                     # la cabeza mira muy fuera de su rango cómodo
         self.fatal = False
         self._ultima_vista = Vista()
         self._ultimas_medidas = None
         self._m_ult_valida = None                 # última cara válida (para "cara distinta")
         self._t_ult_valida = None
-        self._io_pausa_auto = None                # tamaño de la cara al entrar en la pausa automática
+        self._huella = None                       # {"io", "cejas", "sonrisa"} de la persona
+        self._muestras: deque = deque()           # (t, io, cejas, sonrisa) del último segundo
         self._t_cara_nueva = None                 # tras un salto: desde cuándo la cara está estable
         self._por_cuidador = False
         self._ult_pos_externa = None              # última posición del puntero fuera de ventanas propias
@@ -197,6 +218,7 @@ class Maquina:
         if calibracion is not None:
             self.calibracion = calibracion
             self._centrado = True
+            self._huella = None                   # la cara de la calibración nueva es la de la persona
         else:
             cal = calibracion_activa(cfg)
             if isinstance(cal, dict):
@@ -227,17 +249,26 @@ class Maquina:
             self._obj_actual = None
 
     # ------------------------------------------------------------ utilidades
-    def _objetivos_libres(self, pos):
+    def _bloquear(self, ids, t: float):
+        for i in ids:
+            self._bloqueados[i] = t
+
+    def _objetivos_libres(self, pos, t: float):
         """Los objetivos sin los bloqueados. Tras pausar o reanudar, los botones Pausa y
         Reanudar no cuentan hasta que el puntero salga de ellos: si la persona se queda quieta
-        encima, no se pausa y reanuda una y otra vez."""
+        encima, no se pausa y reanuda una y otra vez. Un botón bloqueado que todavía no aparece
+        (la interfaz lo publica unos cuadros después) sigue bloqueado hasta BLOQUEO_AUSENTE_S."""
         if not self._bloqueados:
             return self.objetivos
         x, y = pos
-        for o in self.objetivos:
-            if o.id in self._bloqueados and not o.contiene(x, y, 0.12):
-                self._bloqueados.discard(o.id)
-        self._bloqueados &= {o.id for o in self.objetivos}
+        presentes = {o.id: o for o in self.objetivos}
+        for i, tb in list(self._bloqueados.items()):
+            o = presentes.get(i)
+            if o is not None:
+                if not o.contiene(x, y, 0.12):
+                    del self._bloqueados[i]
+            elif t - tb > BLOQUEO_AUSENTE_S:
+                del self._bloqueados[i]
         return [o for o in self.objetivos if o.id not in self._bloqueados]
 
     @property
@@ -402,13 +433,11 @@ class Maquina:
         self.motivo_pausa = motivo
         self.pausa_auto = auto
         self._t_cara_desde = None
-        # la pausa automática se quita sola solo con una cara de tamaño parecido a la de la persona
-        self._io_pausa_auto = self._io_valido(self._m_ult_valida) if auto else None
         # el parpadeo largo que eligió «Pausa» no cuenta como el primero del doble parpadeo
         self.gestos.olvidar_parpadeo_largo()
         self.perm.reiniciar()
         self._obj_actual = None
-        self._bloqueados |= set(IDS_REANUDAR)
+        self._bloquear(IDS_REANUDAR, t)
         self._sonido("pausar", acc)
         acc.append(Aviso("pausa", motivo))
         log.info("Pausa (%s)", motivo)
@@ -423,7 +452,11 @@ class Maquina:
         self.perm.reiniciar()
         self._desarmar_tras_deslizar(t)
         self._obj_actual = None
-        self._bloqueados |= set(IDS_REANUDAR)
+        self._afuera = False
+        if motivo != "cara de nuevo":
+            # la persona (o el cuidador) reanudó a propósito: la cara de ahora es la de confianza
+            self._huella = self._huella_de_muestras()
+        self._bloquear(IDS_REANUDAR + IDS_PAUSA, t)
         for n in ("boca", "cejas", "sonrisa"):
             if self.gestos.duracion_sostenida(n, t) > 0:
                 self.gestos.consumir(n)        # el gesto que reanudó no hace nada más al soltarlo
@@ -442,6 +475,8 @@ class Maquina:
         cambio = self._cara_distinta(medidas, t)
         if cambio:
             self.gestos.perder_cara(t)          # los gestos en curso no son de esta cara
+            self._muestras.clear()
+        self._guardar_muestra(medidas, t)
         g = self.gestos.actualizar(medidas, t)
         if self._t_cara_nueva is not None:
             if t - self._t_cara_nueva < CARA_ESTABLE_S - 1e-9:
@@ -449,6 +484,10 @@ class Maquina:
                 g.soltados = []
             else:
                 self._t_cara_nueva = None
+                if not self._compatible() and self.estado in (K.ACTIVO, K.PAUSA) and medidas is not None:
+                    self._otra_cara(t, acc)
+                    g.eventos = []
+                    g.soltados = []
         st = EstadoPermanencia()
         if cambio and self.estado != K.CALIBRANDO:
             acc.append(SoltarTodo("cara distinta"))
@@ -490,6 +529,8 @@ class Maquina:
             st = self._en_pausa(t, medidas, g, acc)
         else:
             st = self._en_activo(t, medidas, g, dt, acc)
+        if self.estado == K.ACTIVO:
+            self._aprender_huella(t, g)
         return Resultado(acc, self._vista(t, g, st, medidas))
 
     @staticmethod
@@ -526,6 +567,67 @@ class Maquina:
         if salto:
             self._t_cara_nueva = t
         return salto
+
+    # ------------------------------------------------------------ huella de la cara
+    def _guardar_muestra(self, m, t: float):
+        if m is None:
+            self._muestras.clear()
+            return
+        try:
+            io, cj, so = float(m.io_px), float(m.cejas), float(m.sonrisa)
+        except (AttributeError, TypeError, ValueError):
+            return
+        if not all(math.isfinite(v) and v > 0 for v in (io, cj, so)):
+            return
+        self._muestras.append((t, io, cj, so))
+        while self._muestras and self._muestras[0][0] < t - CARA_ESTABLE_S - 1e-9:
+            self._muestras.popleft()
+
+    def _huella_de_muestras(self):
+        if not self._muestras:
+            return None
+        return {"io": statistics.median(x[1] for x in self._muestras),
+                "cejas": statistics.median(x[2] for x in self._muestras),
+                "sonrisa": statistics.median(x[3] for x in self._muestras)}
+
+    def _compatible(self) -> bool:
+        """¿La cara del último segundo se parece a la huella de la persona? Sin huella, sí."""
+        h = self._huella
+        if h is None:
+            return True
+        ahora = self._huella_de_muestras()
+        if ahora is None:
+            return True
+        for k, tol in HUELLA_TOL.items():
+            ref = h.get(k)
+            if ref and abs(ahora[k] - ref) / ref > tol:
+                return False
+        return True
+
+    def _aprender_huella(self, t: float, g: ResultadoGestos):
+        """Con la cara de confianza y en reposo (sin gestos): la huella sigue despacio los cambios
+        de distancia y de postura del día."""
+        if not self._muestras or self._cara_en_espera(t) or g.activos or self._afuera:
+            return
+        _t, io, cj, so = self._muestras[-1]
+        h = self._huella
+        if h is None:
+            self._huella = self._huella_de_muestras()
+            return
+        a = HUELLA_ALFA
+        h["io"] += a * (io - h["io"])
+        h["cejas"] += a * (cj - h["cejas"])
+        h["sonrisa"] += a * (so - h["sonrisa"])
+
+    def _otra_cara(self, t: float, acc: list):
+        """La cara que quedó tras el salto no se parece a la de la persona: pausa automática."""
+        log.info("La cara nueva no se parece a la de la persona: pausa hasta que vuelva")
+        acc.append(Aviso("otra_cara"))
+        if self.estado == K.PAUSA:
+            if self.pausa_auto:
+                self.motivo_pausa = MOTIVO_OTRA_CARA
+            return
+        self._pausar(t, MOTIVO_OTRA_CARA, acc, auto=True)
 
     def _cara_en_espera(self, t: float) -> bool:
         return self._t_cara_nueva is not None and t - self._t_cara_nueva < CARA_ESTABLE_S - 1e-9
@@ -574,10 +676,11 @@ class Maquina:
     def _en_pausa(self, t: float, m, g: ResultadoGestos, acc: list) -> EstadoPermanencia:
         # el puntero no se mueve, pero se calcula a dónde apunta la cabeza (para "Reanudar")
         pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
-        if self.pausa_auto and self._io_pausa_auto is not None:
-            io = self._io_valido(m)
-            if io is None or abs(io - self._io_pausa_auto) / self._io_pausa_auto > SALTO_IO:
-                self._t_cara_desde = t    # otra cara (el cuidador): no reanuda sola
+        if self.pausa_auto and not self._compatible():
+            self._t_cara_desde = t        # otra cara (el cuidador): no reanuda sola
+            if self.motivo_pausa != MOTIVO_OTRA_CARA and len(self._muestras) >= 3 \
+                    and self._muestras[-1][0] - self._muestras[0][0] >= CARA_ESTABLE_S - 0.1:
+                self.motivo_pausa = MOTIVO_OTRA_CARA   # el aviso dice cómo seguir (Reanudar)
         if self.pausa_auto and self._t_cara_desde is not None and not self._cara_en_espera(t) \
                 and t - self._t_cara_desde >= ESTABLE_PARA_REANUDAR_S - 1e-9:
             self._reanudar(t, "cara de nuevo", acc)
@@ -596,7 +699,7 @@ class Maquina:
             if any(isinstance(e, DobleParpadeoLargo) for e in g.eventos):
                 self._reanudar(t, "doble parpadeo", acc)
                 return EstadoPermanencia()
-        candidatos = [o for o in self._objetivos_libres(pos) if o.id in IDS_REANUDAR and o.elegible]
+        candidatos = [o for o in self._objetivos_libres(pos, t) if o.id in IDS_REANUDAR and o.elegible]
         obj = buscar_objetivo(pos, candidatos, self._obj_actual)
         self._obj_actual = obj
         if g.gesto_activo:
@@ -609,9 +712,50 @@ class Maquina:
         return st
 
     # ------------------------------------------------------------ ACTIVO
+    def _mirando_afuera(self, t: float, m) -> bool:
+        """¿La cabeza está muy por fuera de su rango cómodo (mira a otro lado)? Con histéresis.
+        Al volver, el deslizamiento del puntero no arma la permanencia."""
+        try:
+            u, v = self.mapeo.normalizar(float(m.yaw_n), float(m.pitch_n))
+            a = max(abs(u), abs(v))
+        except (AttributeError, TypeError, ValueError):
+            return self._afuera
+        if not math.isfinite(a):
+            return self._afuera
+        if self._afuera:
+            if a < U_AFUERA_VUELVE:
+                self._afuera = False
+                self._desarmar_tras_deslizar(t, MEZCLA_DESCONGELAR_S)
+                log.info("La cabeza volvió a su rango cómodo")
+        elif a > U_AFUERA:
+            self._afuera = True
+            self.perm.reiniciar()
+            log.info("La cabeza mira fuera de su rango cómodo: puntero quieto y sin clics")
+        return self._afuera
+
+    def _quitar_gestos_de_clic(self, g: ResultadoGestos):
+        """Mirando a otro lado: solo cuentan los gestos que pausan."""
+        gc = self.cfg["gestos"]
+        quedan = []
+        for ev in g.eventos:
+            if isinstance(ev, GestoCorto):
+                ok = gc[ev.nombre]["corto"] == "pausar"
+            elif isinstance(ev, GestoLargo):
+                ok = gc[ev.nombre]["largo"] == "pausar"
+            elif isinstance(ev, ParpadeoLargo):
+                ok = gc["parpadeo"].get("fuera_barrido", "ninguna") == "pausar"
+            else:
+                ok = not isinstance(ev, ParpadeoListo)
+            if ok:
+                quedan.append(ev)
+        g.eventos = quedan
+
     def _en_activo(self, t: float, m, g: ResultadoGestos, dt: float, acc: list) -> EstadoPermanencia:
         sub = self.submodo
-        congelar = (g.gesto_activo or (g.ojos_cerrando and self._parpadeo_con_accion())
+        afuera = sub not in SUBMODOS_SIN_PUNTERO and self._mirando_afuera(t, m)
+        if afuera:
+            self._quitar_gestos_de_clic(g)
+        congelar = (afuera or g.gesto_activo or (g.ojos_cerrando and self._parpadeo_con_accion())
                     or self._recentrar is not None or sub == K.DESPLAZAR or sub in SUBMODOS_SIN_PUNTERO
                     or self._cara_en_espera(t))
         if congelar:
@@ -664,7 +808,7 @@ class Maquina:
             self.perm.reiniciar()
             return EstadoPermanencia()
         # ---- permanencia ----
-        if self.puntero.congelado:
+        if self.puntero.congelado or afuera:
             self.perm.reiniciar()
             return EstadoPermanencia()
         if self.puntero.modo == "joystick" and self.puntero.joystick_moviendo:
@@ -674,7 +818,7 @@ class Maquina:
         if sub == K.ARRASTRANDO:
             obj = None
         else:
-            obj = buscar_objetivo(pos, self._objetivos_libres(pos), self._obj_actual)
+            obj = buscar_objetivo(pos, self._objetivos_libres(pos, t), self._obj_actual)
         self._obj_actual = obj
         libre = bool(self._p_cfg["activa"]) and (sub == K.ARRASTRANDO or not sobre_ventana_propia(pos, self.objetivos))
         tiempo_obj = None
@@ -719,6 +863,13 @@ class Maquina:
         return st
 
     def _paso_desplazar(self, t: float, dt: float, acc: list):
+        if self._afuera:
+            # mirando a otro lado (a comer, al cuidador): no se desplaza, y tampoco cuenta como
+            # "seguir desplazando" (el modo termina solo a los 10 s)
+            self._desp_acum = 0.0
+            if self._t_ult_desp is not None and t - self._t_ult_desp >= DESPLAZAR_INACTIVO_S - 1e-9:
+                self._terminar_desplazar(t, acc)
+            return
         u, v = self.puntero.uv_actual()
         if self._desp_ref is None:
             self._desp_ref = (u, v)
@@ -911,7 +1062,8 @@ class Maquina:
             calibrado=self.calibracion is not None, congelado=self.puntero.congelado,
             arrastre_s=(t - self._t_arrastre) if self._t_arrastre is not None else 0.0,
             medidas=m, objetivo=self._obj_actual.id if self._obj_actual is not None else None,
-            reanuda_parpadeo=self.estado == K.PAUSA and self.reanuda_con_parpadeo())
+            reanuda_parpadeo=self.estado == K.PAUSA and self.reanuda_con_parpadeo(),
+            mirando_afuera=self._afuera and self.estado == K.ACTIVO)
         self._ultima_vista = v
         return v
 

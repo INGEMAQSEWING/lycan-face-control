@@ -482,6 +482,9 @@ class VentanaTeclado:
         if cam in ("NO_ABRE", "OCUPADA", "PERDIDA") and m.estado in (K.PAUSA, K.SIN_CARA):
             return ("camara", t(f"sub_camara_{cam}"))
         if m.estado == K.PAUSA:
+            if m.pausa_auto and getattr(m, "motivo_pausa", "") == "otra_cara":
+                return ("pausa", t("sub_PAUSA_otra_cara_parpadeo" if getattr(m, "reanuda_parpadeo", False)
+                                   else "sub_PAUSA_otra_cara"))
             if m.pausa_auto:
                 return ("pausa", t("sub_PAUSA_auto"))
             if getattr(m, "reanuda_parpadeo", False):

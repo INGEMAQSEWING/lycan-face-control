@@ -113,7 +113,7 @@ class Motor(threading.Thread):
         self.error_inicio: str | None = None
         self.ultima_accion = ""
         self._numero = 0
-        self._t_ult_proceso = None
+        self._t_proximo = None              # horario del limitador de cuadros procesados
         self._t_ult_paso = None
         # latido (time.monotonic) al empezar cada vuelta: el vigilante de la interfaz distingue un
         # motor lento (un cuadro que tardó, memoria paginada) de uno trabado o muerto
@@ -142,14 +142,16 @@ class Motor(threading.Thread):
                     log.exception("No se pudo leer el escritorio")
         if self.maquina is None:
             self.maquina = Maquina(self.cfg, self.monitor, pos_cursor=self._pos_cursor, t0=self.reloj())
+        # la detección se carga ANTES de encender la cámara (ronda 3): si falla (poca memoria, falta
+        # una DLL) la cámara ni se abre y el bombillo no queda encendido
+        if self.detector is None:
+            from .detector import Detector
+            self.detector = Detector()
         if self.camara is None:
             self.camara = self._nueva_camara()
             self._camara_propia = True
         if hasattr(self.camara, "is_alive") and not self.camara.is_alive() and hasattr(self.camara, "start"):
             self.camara.start()
-        if self.detector is None:
-            from .detector import Detector
-            self.detector = Detector()
 
     def _nueva_camara(self):
         from .captura import Camara
@@ -227,7 +229,9 @@ class Motor(threading.Thread):
         except Exception as e:  # noqa: BLE001
             log.exception("No se pudo arrancar el motor")
             self.error_inicio = repr(e)
-            self.salida.soltar_todo("error al arrancar")
+            # suelta todo y apaga lo que alcanzó a abrir (cámara, detector): el reintento del
+            # vigilante tiene que poder abrir la cámara otra vez
+            self.cerrar()
             self.avisos.put(Aviso("error_inicio", repr(e)))
             self.listo.set()
             return
@@ -301,11 +305,8 @@ class Motor(threading.Thread):
                 self._paso(ahora, None, None)
             return
         self._numero = cuadro.numero
-        fps_max = float(self.cfg["camara"].get("fps_proceso", 20))
-        if self._t_ult_proceso is not None and fps_max > 0 \
-                and cuadro.t_captura - self._t_ult_proceso < 1.0 / fps_max - 0.004:
+        if not self._toca_procesar(cuadro.t_captura):
             return                      # más cuadros de los que hace falta procesar
-        self._t_ult_proceso = cuadro.t_captura
         try:
             cara = self.detector.procesar(cuadro.imagen, cuadro.t_captura)
         except Exception as e:  # noqa: BLE001
@@ -314,6 +315,26 @@ class Motor(threading.Thread):
             self._revisar_fatal()
             return
         self._paso(cuadro.t_captura, cara, cuadro)
+
+    def _toca_procesar(self, tc: float) -> bool:
+        """Limitador con horario (ronda 3): se procesa si llegó la hora del siguiente cuadro y la
+        hora avanza un periodo cada vez. Antes se comparaba con el último procesado y una cámara
+        de 30 cuadros/s quedaba en 15 (se saltaba uno de cada dos)."""
+        try:
+            fps_max = float(self.cfg["camara"].get("fps_proceso", 20))
+        except (TypeError, ValueError):
+            fps_max = 20.0
+        if not fps_max > 0:
+            return True
+        periodo = 1.0 / fps_max
+        prox = self._t_proximo
+        if prox is not None and tc < prox - 0.004:
+            if prox - tc <= 2.0 * periodo:
+                return False
+            prox = None                 # el reloj de la cámara volvió atrás: horario nuevo
+        base = tc if prox is None else prox
+        self._t_proximo = max(base + periodo, tc - periodo)
+        return True
 
     def _paso(self, t: float, cara, cuadro):
         self._t_ult_paso = self.reloj()

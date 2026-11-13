@@ -255,6 +255,30 @@ class SalidaBase:
         if hubo:
             log.info("Soltar todo: %s", motivo or "sin motivo")
 
+    def _botones_presionados_en_windows(self) -> list:
+        """Botones del ratón que Windows cree presionados (la salida de Windows lo pregunta)."""
+        return []
+
+    def soltar_botones_huerfanos(self, motivo: str = "arranque") -> list:
+        """Al arrancar (ronda 3): si la sesión anterior se cerró a la fuerza en medio de un
+        arrastre (Administrador de tareas, un fallo nativo), Windows sigue con el botón abajo y
+        la persona no tiene un ratón para soltarlo. Se envía "subir" de los que estén abajo."""
+        try:
+            abajo = [b for b in self._botones_presionados_en_windows() if b not in self.botones_abajo]
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo revisar el estado de los botones")
+            return []
+        if not abajo:
+            return []
+        try:
+            with self._lock:
+                self._enviar([("boton", b, False) for b in abajo])
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo soltar un botón que quedó presionado")
+            return []
+        log.warning("Se soltó %s: quedó presionado de la sesión anterior (%s)", ", ".join(abajo), motivo)
+        return abajo
+
     def probar(self) -> bool:
         """Envío inocuo para saber si Windows vuelve a aceptar eventos."""
         try:

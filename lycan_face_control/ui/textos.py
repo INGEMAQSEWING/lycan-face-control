@@ -35,6 +35,8 @@ TXT: dict[str, str] = {
     "sub_ACTIVO_sin_clic": "Mueva la cabeza para llevar el puntero. Para hacer clic, elija un gesto en Opciones.",
     "sub_PAUSA": "No muevo el puntero ni hago clic. Para seguir, elija «Reanudar» con la cabeza.",
     "sub_PAUSA_auto": "Pausa porque no veía su cara. Sigo solo cuando vuelva a verla un momento.",
+    "sub_PAUSA_otra_cara": "Pausa porque veo otra cara. Sigo solo cuando vuelva la persona que usa el programa. Si es usted, elija «Reanudar» con la cabeza.",
+    "sub_PAUSA_otra_cara_parpadeo": "Pausa porque veo otra cara. Sigo solo cuando vuelva la persona que usa el programa. Si es usted, cierre los ojos dos veces seguidas, cada vez un momento largo.",
     "sub_PAUSA_parpadeo": "En pausa. Para seguir, cierre los ojos dos veces seguidas, cada vez un momento largo.",
     "sub_camara_NO_ABRE": "No encuentro la cámara. Revise que esté conectada.",
     "sub_camara_OCUPADA": "Otro programa está usando la cámara. Ciérrelo para que yo pueda verla.",
@@ -125,6 +127,7 @@ TXT: dict[str, str] = {
     "aviso_activo": "Activo.",
     "aviso_sin_cara": "No veo su cara. Acérquese a la cámara o revise la luz.",
     "aviso_cara_vuelve": "Ya veo su cara otra vez.",
+    "aviso_otra_cara": "Veo una cara distinta a la de la persona que usa el programa. Pausé para no hacer clics.",
     "aviso_cara_distinta": "Parece que hay otra cara frente a la cámara. Solté todo; espero un momento antes de seguir.",
     "aviso_recomendar_calibrar": "Le recomiendo calibrar para que el puntero se ajuste a su forma de moverse.",
     "aviso_recentrando": "Mire al frente y quédese quieto un momento…",
@@ -606,6 +609,8 @@ def subtitulo(vista, cfg: dict | None = None) -> str:
     if cam in ("NO_ABRE", "OCUPADA", "PERDIDA") and m.estado in (K.PAUSA, K.SIN_CARA):
         return TXT[f"sub_camara_{cam}"]
     if m.estado == K.PAUSA:
+        if m.pausa_auto and getattr(m, "motivo_pausa", "") == "otra_cara":
+            return TXT["sub_PAUSA_otra_cara_parpadeo" if getattr(m, "reanuda_parpadeo", False) else "sub_PAUSA_otra_cara"]
         if m.pausa_auto:
             return TXT["sub_PAUSA_auto"]
         if getattr(m, "reanuda_parpadeo", False):
