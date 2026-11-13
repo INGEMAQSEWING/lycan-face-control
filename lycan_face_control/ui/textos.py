@@ -53,7 +53,7 @@ TXT: dict[str, str] = {
     "btn_calibrar": "Calibrar",
     "btn_opciones": "Opciones",
     "btn_ayuda": "Ayuda",
-    "btn_mini": "Ventana pequeña",
+    "btn_mini": "Pequeña",
     "btn_grande": "Agrandar",
     "btn_salir": "Salir",
     "btn_si_salir": "Sí, salir",

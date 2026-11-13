@@ -49,6 +49,7 @@ class Registro:
         self.ventanas: dict[str, object] = {}
         self.manejadores: list[tuple[str, object]] = []
         self._ultimo: list | None = None
+        self.ultimos: tuple = ()          # última lista publicada (la leen otros hilos; nunca tkinter)
         self._resaltado: str | None = None
 
     # ------------------------------------------------------------ alta y baja
@@ -136,6 +137,7 @@ class Registro:
         if not forzar and clave == self._ultimo:
             return False
         self._ultimo = clave
+        self.ultimos = tuple(objs)
         if self.publicar_fn is not None:
             try:
                 self.publicar_fn(objs)
@@ -193,12 +195,6 @@ class Registro:
 
     @staticmethod
     def _destello(widget):
-        """Señal visible de "elegido" durante 250 ms."""
-        try:
-            if not hasattr(widget, "activo"):
-                return
-            antes = getattr(widget, "_activo", False)
-            widget.activo(not antes)
-            widget.after(250, lambda: widget.winfo_exists() and widget.activo(antes))
-        except (tk.TclError, AttributeError):
-            pass
+        f = getattr(widget, "destello", None)
+        if f is not None:
+            f()

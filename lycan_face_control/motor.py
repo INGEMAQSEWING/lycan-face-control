@@ -55,6 +55,7 @@ class VistaMotor:
     ultima_accion: str = ""
     simulada: bool = False
     t: float = 0.0
+    imagen: object = None            # cuadro reducido (BGR) SOLO si "Mostrar el video" está encendido
 
 
 class Estadisticas:
@@ -257,7 +258,7 @@ class Motor(threading.Thread):
             self.stats.cuadro(cuadro.t_captura)
             self.stats.latencia(max((self.reloj() - cuadro.t_captura) * 1000.0, 0.0))
         self._registro_rendimiento(t)
-        self._publicar(res.vista, cara, io_fr, centro, t)
+        self._publicar(res.vista, cara, io_fr, centro, t, cuadro)
         self._revisar_fatal()
 
     def _revisar_fatal(self):
@@ -382,12 +383,18 @@ class Motor(threading.Thread):
             self._t_registro = t
             log.info("Rendimiento: %s", self.stats.resumen())
 
-    def _publicar(self, vista: Vista, cara, io_fr, centro, t: float):
+    def _publicar(self, vista: Vista, cara, io_fr, centro, t: float, cuadro=None):
+        imagen = None
+        if cuadro is not None and (self.cfg.get("comodidad") or {}).get("mostrar_video"):
+            try:
+                imagen = cuadro.imagen[::2, ::2].copy()     # la mitad: basta para la ventana
+            except Exception:  # noqa: BLE001
+                imagen = None
         v = VistaMotor(maquina=vista, fps=self.stats.fps,
                        latencia_ms=self.stats.latencias[-1] if self.stats.latencias else 0.0,
                        puntos=None if cara is None else cara.normalizados, io_fraccion=io_fr, centro_cara=centro,
                        camara=getattr(self.camara, "estado", ""), ultima_accion=self.ultima_accion,
-                       simulada=bool(getattr(self.salida, "simulada", False)), t=t)
+                       simulada=bool(getattr(self.salida, "simulada", False)), t=t, imagen=imagen)
         try:
             self.vistas.get_nowait()
         except queue.Empty:

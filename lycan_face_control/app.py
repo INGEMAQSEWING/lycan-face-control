@@ -4,8 +4,8 @@ Orden obligatorio: DPI en la primera línea (antes de tkinter) -> registro -> ar
 mutex -> configuración -> salida + atexit + señales -> hilos -> interfaz. Todo dentro de
 try/finally: el finally suelta todo, detiene los hilos y libera la cámara.
 
-Parte 1: argumentos, ``--check`` (sin cámara ni ratón) y el esqueleto de ``main``. La ventana,
-los hilos y el motor se conectan en las Partes 2 y 3 (``_arrancar``).
+Parte 1: argumentos y ``--check`` (sin cámara ni ratón). Parte 3: el programa completo (ventanas,
+hilos, motor y atajos) está en ``ui/aplicacion.py`` y se abre con ``_arrancar``.
 """
 from __future__ import annotations
 

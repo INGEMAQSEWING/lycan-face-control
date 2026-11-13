@@ -1,0 +1,779 @@
+"""La aplicación completa (secciones 2.1, 3.1, 6 y 8): une la configuración, la salida, el motor,
+los atajos del cuidador, los sonidos, la voz (si existe) y todas las ventanas.
+
+Hilo de la interfaz (este): cada ~33 ms toma la última vista del motor, atiende sus avisos
+(``Elegir``, ``Sonido``, ``Hablar``, ``Aviso``) y los atajos, pinta las ventanas y, cada 250 ms,
+publica al motor los botones propios en coordenadas de pantalla.
+
+Seguridad (sección 8):
+- ``soltar_todo`` en atexit, señales, al salir, al abrir Opciones y cuando falla algo;
+- si el motor deja de publicar 2 s (o se cae), se suelta todo, se avisa y se reinicia la
+  detección hasta 3 veces;
+- el atajo de pausa del cuidador suelta todo en el propio hilo de atajos.
+
+Para el teclado en pantalla (Parte 4): ``ui/teclado.py`` con ``VentanaTeclado(root, app)``
+(atributos/métodos opcionales: ``win``, ``cerrar()``, ``submodo_inicial()``,
+``actualizar(vista)``). Registra sus teclas en ``app.registro`` y, para identificadores sin botón
+(``barrido:...``, ``accion:...``), usa ``app.registro.manejador(prefijo, funcion)``.
+Para la voz: ``sistema/voz.py`` con ``Voz(cfg_voz)`` (``hablar(texto, urgente=False)``, ``cerrar()``)
+o una función ``hablar(texto)``.
+"""
+from __future__ import annotations
+
+import atexit
+import copy
+import ctypes
+import json
+import logging
+import queue
+import signal
+import sys
+import time
+
+from .. import constantes as K
+from .. import registro as registro_mod
+from ..acciones import Aviso, Elegir, Hablar, Sonido
+from ..config import Configuracion, validar
+from ..version import VERSION
+from .objetivos import Registro
+from .textos import t, texto_aviso
+
+log = logging.getLogger("lycan")
+
+REFRESCO_MS = 33
+PUBLICAR_CADA_S = 0.25
+MOTOR_CAIDO_S = 2.0
+MAX_REINICIOS = 3
+AVISOS_POR_VUELTA = 60
+# avisos que no se muestran (o que ya se ven en el estado grande)
+AVISOS_CALLADOS = {"pausa", "activo", "teclado", "sobre_ventana", "arrastre_fin"}
+
+
+class App:
+    def __init__(self, args, fabrica_motor=None, salida=None, sistema: bool = True, cfg: Configuracion | None = None):
+        """``fabrica_motor(cfg, salida) -> Motor``: las pruebas la usan para un motor sin cámara.
+        ``sistema=False``: no toca Windows (sin atajos, sin registro de arranque, sin foco)."""
+        self.args = args
+        self.sistema = sistema
+        self.cerrando = False
+        self.root = None
+        self.ventana = None
+        self.barra = None
+        self.indicador = None
+        self.borde = None
+        self.flotante = None
+        self.teclado = None
+        self.calibracion = None
+        self.opciones = None
+        self.ayuda = None
+        self.asistente = None
+        self.atajos = None
+        self.voz = None
+        self.ultima_vista = None
+        self.oyentes_vista: list = []
+        self.cola_atajos: queue.Queue = queue.Queue()
+        self.reinicios = 0
+        self.motor_rendido = False
+        self.ultima_externa = None
+        self._t_ult_vista = time.monotonic()
+        self._t_publicar = 0.0
+        self._t_descanso = time.monotonic()
+        self._hwnd_atravesables: set = set()
+        self.cfg = cfg or Configuracion()
+        if cfg is None:
+            self.cfg.cargar()
+        self.simulada = bool(getattr(args, "simular", False))
+        if salida is None:
+            from ..salida import crear
+            salida = crear(self.simulada)
+        self.salida = salida
+        self._fabrica_motor = fabrica_motor or self._motor_normal
+        atexit.register(self._soltar_seguro, "atexit")
+        if sistema:
+            for nombre in ("SIGINT", "SIGBREAK", "SIGTERM"):
+                sig = getattr(signal, nombre, None)
+                if sig is not None:
+                    try:
+                        signal.signal(sig, self._senal)
+                    except (ValueError, OSError):
+                        pass
+            self._preparar_salida()
+        from ..sistema.sonidos import Sonidos
+        self.sonidos = Sonidos(bool(self.cfg.datos["comodidad"].get("sonidos", True)), arrancar=sistema)
+        self.registro = Registro(publicar=self._publicar_objetivos, orden=self.orden)
+        self.motor = self._crear_motor()
+        registro_mod.instalar_ganchos(self._al_fallar)
+
+    # ------------------------------------------------------------ motor y salida
+    def _config_motor(self) -> dict:
+        c = copy.deepcopy(self.cfg.datos)
+        if getattr(self.args, "camara", None) is not None:
+            c["camara"]["indice"] = int(self.args.camara)       # solo para esta sesión
+        return c
+
+    def _motor_normal(self, cfg, salida):
+        from ..motor import Motor
+        camara = None
+        if getattr(self.args, "camara_falsa", False):
+            from ..captura import CamaraFalsa
+            camara = CamaraFalsa(generador=_generador_cara_dibujada())
+        return Motor(cfg, salida, camara=camara)
+
+    def _crear_motor(self):
+        m = self._fabrica_motor(self._config_motor(), self.salida)
+        if getattr(self, "registro", None) is not None:
+            self.registro._ultimo = None           # el motor nuevo necesita los botones otra vez
+        return m
+
+    def _preparar_salida(self):
+        """En Windows: no hacer clic en ventanas propias (por PID, sin contar las atravesables)
+        y avisar si la ventana activa es de administrador."""
+        try:
+            from ..sistema import ventanas_win as vw
+            self.salida.es_propia_en = self._es_propia_en
+            self.salida.revisar_destino = lambda: "administrador" if vw.primer_plano_bloqueado() else None
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo preparar la salida")
+
+    def _es_propia_en(self, x, y) -> bool:
+        from ..sistema import ventanas_win as vw
+        hwnd = vw.ventana_en(x, y)
+        if not hwnd:
+            return False
+        try:
+            raiz = ctypes.windll.user32.GetAncestor(hwnd, 2) or hwnd     # GA_ROOT
+        except Exception:  # noqa: BLE001
+            raiz = hwnd
+        if raiz in self._hwnd_atravesables:
+            # el indicador junto al cursor no cuenta: se miran los rectángulos propios publicados
+            # (este código corre en el hilo del motor: aquí nunca se llama a tkinter)
+            return any(o.contiene(x, y) for o in self.registro.ultimos if not o.elegible)
+        return vw.es_propia_en(x, y)
+
+    def _soltar_seguro(self, motivo: str):
+        try:
+            self.salida.soltar_todo(motivo)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _senal(self, signum, _frame):
+        self._soltar_seguro(f"señal {signum}")
+        if self.root is not None:
+            try:
+                self.root.after(0, self.salir_seguro)
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        raise SystemExit(1)
+
+    def _al_fallar(self, exc):
+        self._soltar_seguro("error no atrapado")
+        self.orden("error_externo", exc)
+
+    def _publicar_objetivos(self, objetivos):
+        self.motor.poner_objetivos(objetivos)
+
+    # ------------------------------------------------------------ órdenes
+    def orden(self, nombre, *args):
+        if nombre == "config" and args and getattr(self.args, "camara", None) is not None:
+            try:
+                args[0]["camara"]["indice"] = int(self.args.camara)
+            except (KeyError, TypeError, IndexError):
+                pass
+        self.motor.orden(nombre, *args)
+
+    def pausar(self):
+        self.orden("pausar", "botón Pausar")
+
+    def recentrar(self):
+        self.orden("recentrar")
+
+    def guardar_config(self, datos: dict | None = None) -> bool:
+        if getattr(self.args, "prueba_segundos", 0) and getattr(self.args, "simular", False) and self.cfg.ruta.exists():
+            return True     # una prueba automática no cambia la configuración real
+        if self.cfg.guardar_seguro(datos):
+            return True
+        self.mostrar_aviso(t("aviso_config_solo_lectura") if self.cfg.solo_lectura else t("aviso_no_guardo"), 10)
+        return False
+
+    def aplicar_config(self, datos: dict, antes: dict | None = None):
+        """Opciones guardadas: se guarda, se le pasa al motor y se rehacen las ventanas que dependen
+        de la apariencia."""
+        antes = antes or self.cfg.datos
+        self.cfg.datos = validar(datos)
+        self.guardar_config()
+        self.orden("config", self._config_motor())
+        self.sonidos.activos = bool(self.cfg.datos["comodidad"].get("sonidos", True))
+        apariencia = any(antes.get(k) != self.cfg.datos.get(k) for k in ("comodidad", "barra"))
+        if apariencia and self.root is not None:
+            try:
+                if self.ventana is not None:
+                    self.ventana.reconstruir()
+                if self.barra is not None:
+                    self.barra.construir()
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudieron rehacer las ventanas")
+        elif self.ventana is not None:
+            self.ventana._mostrar_barras()
+        if antes.get("atajos") != self.cfg.datos.get("atajos"):
+            self.reiniciar_atajos()
+        if self.voz is not None and hasattr(self.voz, "configurar"):
+            try:
+                self.voz.configurar(self.cfg.datos["voz"])
+            except Exception:  # noqa: BLE001
+                pass
+        self._t_descanso = time.monotonic()
+
+    def poner_al_encender(self, si: bool):
+        if not self.sistema:
+            return
+        from ..sistema import inicio
+        if not inicio.poner(si):
+            self.mostrar_aviso(t("aviso_no_guardo"), 8)
+
+    # ------------------------------------------------------------ ventanas
+    def mostrar_aviso(self, texto: str, segundos: float = 6.0):
+        if self.ventana is not None and texto:
+            self.ventana.mostrar_aviso(texto, segundos)
+
+    def _ventana_viva(self, w) -> bool:
+        try:
+            return w is not None and w.win.winfo_exists()
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _al_frente(self, w):
+        try:
+            w.win.deiconify()
+            w.win.lift()
+        except Exception:  # noqa: BLE001
+            pass
+        return w
+
+    def abrir_opciones(self):
+        if self._ventana_viva(self.opciones):
+            return self._al_frente(self.opciones)
+        from .opciones import VentanaOpciones
+        self.opciones = VentanaOpciones(self.root, self)
+        return self.opciones
+
+    def opciones_cerradas(self, o):
+        if self.opciones is o:
+            self.opciones = None
+
+    def abrir_ayuda(self):
+        if self._ventana_viva(self.ayuda):
+            return self._al_frente(self.ayuda)
+        from .ayuda import VentanaAyuda
+        self.ayuda = VentanaAyuda(self.root, self)
+        return self.ayuda
+
+    def ayuda_cerrada(self, a):
+        if self.ayuda is a:
+            self.ayuda = None
+
+    def abrir_asistente(self):
+        if self._ventana_viva(self.asistente):
+            return self._al_frente(self.asistente)
+        from .asistente import Asistente
+        self.asistente = Asistente(self.root, self)
+        return self.asistente
+
+    def asistente_cerrado(self, a):
+        if self.asistente is a:
+            self.asistente = None
+
+    def abrir_calibracion(self, empezar_ya: bool = False):
+        if self._ventana_viva(self.calibracion):
+            return self._al_frente(self.calibracion)
+        from .calibracion import VentanaCalibracion
+        self.calibracion = VentanaCalibracion(self.root, self, empezar_ya=empezar_ya)
+        return self.calibracion
+
+    def calibracion_cerrada(self, c):
+        if self.calibracion is c:
+            self.calibracion = None
+
+    def alternar_teclado(self):
+        if self.teclado is not None:
+            self.cerrar_teclado()
+            return
+        try:
+            from .teclado import VentanaTeclado
+        except ImportError:
+            self.mostrar_aviso(t("aviso_teclado_no_disponible"))
+            return
+        try:
+            self.teclado = VentanaTeclado(self.root, self)
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo abrir el teclado")
+            self.teclado = None
+            self.mostrar_aviso(t("aviso_error"))
+            return
+        sub = K.TECLADO
+        f = getattr(self.teclado, "submodo_inicial", None)
+        if f is not None:
+            try:
+                sub = f() or K.TECLADO
+            except Exception:  # noqa: BLE001
+                sub = K.TECLADO
+        if not getattr(self.teclado, "gestiona_submodo", False):
+            self.orden("submodo", sub)
+
+    def cerrar_teclado(self):
+        tec, self.teclado = self.teclado, None
+        if tec is None:
+            return
+        f = getattr(tec, "cerrar", None)
+        try:
+            if f is not None:
+                f()
+            elif hasattr(tec, "win"):
+                tec.win.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+        if not self.cfg.datos["teclado"].get("solo_comunicacion"):
+            self.orden("submodo", K.NORMAL)
+
+    def teclado_cerrado(self, tec=None):
+        """El teclado avisa que se cerró solo."""
+        if tec is None or tec is self.teclado:
+            self.teclado = None
+            if not self.cfg.datos["teclado"].get("solo_comunicacion"):
+                self.orden("submodo", K.NORMAL)
+
+    def mostrar_ventana(self):
+        if self.root is None:
+            return
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ------------------------------------------------------------ voz
+    def hablar(self, texto: str, urgente: bool = False):
+        if urgente:
+            self.sonidos.tocar("alerta")
+        if self.voz is None and self.sistema:
+            self._crear_voz()
+        ok = False
+        if self.voz is not None:
+            try:
+                f = getattr(self.voz, "hablar", None)
+                if f is not None:
+                    r = f(texto, urgente=urgente) if _acepta_urgente(f) else f(texto)
+                    ok = r is not False
+            except Exception:  # noqa: BLE001
+                log.exception("La voz falló")
+        if not ok:
+            self.mostrar_aviso(texto, 10)
+
+    def _crear_voz(self):
+        try:
+            from ..sistema import voz as modulo
+        except ImportError:
+            self.voz = None
+            return
+        try:
+            clase = getattr(modulo, "Voz", None)
+            self.voz = clase(self.cfg.datos["voz"]) if clase is not None else modulo
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo preparar la voz")
+            self.voz = None
+
+    # ------------------------------------------------------------ atajos
+    def _arrancar_atajos(self):
+        if not self.sistema or getattr(self.args, "sin_atajos", False):
+            return
+        try:
+            from ..sistema.atajos import HiloAtajos
+            self.atajos = HiloAtajos(self.cfg.datos["atajos"], self.cola_atajos,
+                                     directos={"pausar": lambda: self.motor.atajo("pausar"),
+                                               "salir": lambda: self.motor.atajo("salir")})
+            self.atajos.start()
+            self.root.after(800, self._avisar_atajos)
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudieron registrar los atajos")
+            self.atajos = None
+
+    def reiniciar_atajos(self):
+        if self.atajos is not None:
+            try:
+                self.atajos.detener()
+                self.atajos.join(timeout=1.0)
+            except Exception:  # noqa: BLE001
+                pass
+            self.atajos = None
+        self._arrancar_atajos()
+
+    def _avisar_atajos(self):
+        if self.atajos is not None and self.atajos.fallidos:
+            self.mostrar_aviso(t("aviso_atajos") + "\n" + "\n".join(txt for _, txt in self.atajos.fallidos), 10)
+
+    def _atender_atajo(self, nombre: str):
+        if nombre == "pausar":
+            pass                        # ya se atendió en el hilo de atajos (suelta todo al instante)
+        elif nombre == "teclado":
+            self.alternar_teclado()
+        elif nombre == "recentrar":
+            self.motor.atajo("recentrar")
+        elif nombre == "ventana":
+            if self.ventana is not None and self.ventana.mini:
+                self.ventana.alternar_mini()
+            self.mostrar_ventana()
+        elif nombre == "salir":
+            self.salir_seguro()
+
+    # ------------------------------------------------------------ ciclo de vida
+    def construir_interfaz(self):
+        import tkinter as tk
+        from .barra import BarraAcciones
+        from .indicador import BordeEstado, IndicadorCursor, ReanudarFlotante
+        from .ventana_principal import VentanaPrincipal
+        self.root = tk.Tk()
+        self.ventana = VentanaPrincipal(self.root, self)
+        self.root.update_idletasks()
+        from .comun import no_activar
+        no_activar(self.root)
+        self.barra = BarraAcciones(self.root, self)
+        self.indicador = IndicadorCursor(self.root, self)
+        self.borde = BordeEstado(self.root, self)
+        self.flotante = ReanudarFlotante(self.root, self)
+        if self.cfg.aviso:
+            self.mostrar_aviso(self.cfg.aviso, 10)
+        if registro_mod.ERROR:
+            self.root.after(300, lambda: self.mostrar_aviso(t("aviso_sin_registro"), 8))
+        self.root.after(REFRESCO_MS, self._refrescar)
+        return self.root
+
+    def correr(self) -> int:
+        codigo = 0
+        try:
+            self.motor.start()
+            self.construir_interfaz()
+            self._arrancar_atajos()
+            prueba = float(getattr(self.args, "prueba_segundos", 0) or 0)
+            if self.cfg.datos.get("primera_vez") and not prueba:
+                self.root.after(700, self.abrir_asistente)
+            if prueba:
+                self.root.after(int(prueba * 1000), self.salir_seguro)
+            self.root.mainloop()
+        except KeyboardInterrupt:
+            codigo = 1
+        except Exception:  # noqa: BLE001
+            log.exception("Error en la interfaz")
+            codigo = 1
+        finally:
+            self.finalizar()
+        return codigo
+
+    def _refrescar(self):
+        if self.cerrando or self.root is None:
+            return
+        try:
+            self.vuelta_interfaz()
+        except Exception:  # noqa: BLE001
+            log.exception("Error al pintar la interfaz")
+        if not self.cerrando:
+            try:
+                self.root.after(REFRESCO_MS, self._refrescar)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def vuelta_interfaz(self):
+        """Una vuelta del hilo de la interfaz (las pruebas la llaman directamente)."""
+        while True:
+            try:
+                self._atender_atajo(self.cola_atajos.get_nowait())
+            except queue.Empty:
+                break
+        try:
+            v = self.motor.vistas.get_nowait()
+            self.ultima_vista = v
+            self._t_ult_vista = time.monotonic()
+        except queue.Empty:
+            v = self.ultima_vista
+        for _ in range(AVISOS_POR_VUELTA):
+            try:
+                a = self.motor.avisos.get_nowait()
+            except queue.Empty:
+                break
+            self.atender(a)
+        self._pintar(v)
+        ahora = time.monotonic()
+        if ahora - self._t_publicar >= PUBLICAR_CADA_S:
+            self._t_publicar = ahora
+            self.registro.publicar()
+            self._revisar_foco()
+            self._revisar_descanso(ahora)
+        self._vigilar_motor(ahora)
+
+    def _pintar(self, v):
+        detenido = self.motor_rendido
+        if self.ventana is not None:
+            self.ventana.actualizar(v, detenido=detenido)
+        m = v.maquina if v is not None else None
+        if self.barra is not None:
+            self.barra.actualizar(v)
+        if self.indicador is not None:
+            self.indicador.actualizar(v)
+        if self.borde is not None:
+            self.borde.actualizar(m.estado if m is not None else K.PAUSA,
+                                  bool(self.cfg.datos["comodidad"].get("indicador_borde", True)))
+            self._recordar_atravesable(self.borde)
+        if self.indicador is not None:
+            self._recordar_atravesable(self.indicador)
+        if self.flotante is not None:
+            escondida = False
+            try:
+                escondida = not self.root.winfo_viewable()
+            except Exception:  # noqa: BLE001
+                pass
+            self.flotante.actualizar(m is not None and m.estado == K.PAUSA and escondida)
+        if m is not None:
+            self.registro.resaltar(m.objetivo)
+        for f in list(self.oyentes_vista):
+            try:
+                f(v)
+            except Exception:  # noqa: BLE001
+                log.exception("Error en un oyente de la vista")
+        if self.teclado is not None and hasattr(self.teclado, "actualizar"):
+            try:
+                self.teclado.actualizar(v)
+            except Exception:  # noqa: BLE001
+                log.exception("Error al pintar el teclado")
+
+    def _recordar_atravesable(self, obj):
+        if not self.sistema or getattr(obj, "_hwnd_recordado", False):
+            return
+        try:
+            from ..sistema import ventanas_win as vw
+            hwnd = vw.raiz(obj.win.winfo_id())
+            self._hwnd_atravesables.add(hwnd)
+            obj._hwnd_recordado = True
+        except Exception:  # noqa: BLE001
+            pass
+
+    def atender(self, a):
+        """Un aviso del motor."""
+        if isinstance(a, Elegir):
+            if not a.objetivo.startswith("ventana:"):
+                self.registro.elegir(a.objetivo, "cabeza")
+            return
+        if isinstance(a, Sonido):
+            self.sonidos.tocar(a.nombre)
+            return
+        if isinstance(a, Hablar):
+            self.hablar(a.texto, a.urgente)
+            return
+        if not isinstance(a, Aviso):
+            return
+        clave = a.clave
+        if clave == "teclado":
+            self.alternar_teclado()
+            return
+        if clave == "fatal":
+            self.mostrar_aviso(t("aviso_fatal"), 8)
+            return            # el vigilante reinicia el motor
+        if clave == "error_inicio":
+            self.motor_rendido = True
+        if clave in AVISOS_CALLADOS:
+            return
+        texto = texto_aviso(a)
+        if texto:
+            self.mostrar_aviso(texto, 8 if clave in ("administrador", "foco_propio", "bloqueo") else 6)
+
+    def _revisar_foco(self):
+        """Cada 250 ms: si la ventana activa es propia, no se escribe en ella; se recuerda la
+        última ventana de otro programa (para devolverle el foco antes de escribir)."""
+        if not self.sistema:
+            return
+        try:
+            from ..sistema import ventanas_win as vw
+            hwnd = vw.ventana_activa()
+            propia = bool(hwnd) and vw.es_propia(hwnd)
+            self.salida.foco_propio = propia
+            if hwnd and not propia:
+                self.ultima_externa = hwnd
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _revisar_descanso(self, ahora: float):
+        minutos = int(self.cfg.datos["comodidad"].get("descanso_min", 0) or 0)
+        if minutos <= 0:
+            self._t_descanso = ahora
+            return
+        if ahora - self._t_descanso >= minutos * 60:
+            self._t_descanso = ahora
+            self.mostrar_aviso(t("aviso_descanso"), 15)
+
+    def _vigilar_motor(self, ahora: float):
+        """Sección 8.5: motor caído o sin vistas 2 s -> soltar todo, avisar y reiniciar (3 veces)."""
+        m = self.motor
+        if self.motor_rendido or self.cerrando:
+            return
+        if not m.listo.is_set():
+            self._t_ult_vista = ahora           # todavía cargando la detección
+            return
+        if getattr(m, "error_inicio", None):
+            self.motor_rendido = True
+            self.mostrar_aviso(t("aviso_error_inicio"), 15)
+            return
+        caido = not m.is_alive() or ahora - self._t_ult_vista > MOTOR_CAIDO_S
+        if not caido:
+            return
+        self._soltar_seguro("motor caído")
+        if self.reinicios >= MAX_REINICIOS:
+            self.motor_rendido = True
+            log.error("El motor no se pudo reiniciar")
+            self.mostrar_aviso(t("aviso_motor_rendido"), 30)
+            return
+        self.reinicios += 1
+        log.warning("El motor no responde: reinicio %d de %d", self.reinicios, MAX_REINICIOS)
+        self.mostrar_aviso(t("aviso_motor_caido"), 8)
+        try:
+            m.detener()
+            m.join(timeout=1.0)
+        except Exception:  # noqa: BLE001
+            pass
+        self.motor = self._crear_motor()
+        self.motor.start()
+        self.motor.orden("pausar", "reinicio")
+        self._t_ult_vista = ahora
+        self.registro.publicar(forzar=True)
+
+    def salir_seguro(self):
+        if self.cerrando:
+            return
+        self.cerrando = True
+        self._soltar_seguro("salir")
+        log.info("Saliendo")
+        try:
+            if self.ventana is not None:
+                x, y = self.ventana.posicion()
+                self.cfg.datos["ventana"]["x"], self.cfg.datos["ventana"]["y"] = int(x), int(y)
+        except Exception:  # noqa: BLE001
+            pass
+        for w in (self.indicador, self.borde, self.flotante):
+            try:
+                if w is not None:
+                    w.destruir()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            if self.root is not None:
+                self.root.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def finalizar(self):
+        """Soltar todo -> detener el motor -> atajos -> voz -> sonidos -> guardar."""
+        self.cerrando = True
+        self._soltar_seguro("fin")
+        try:
+            self.motor.detener()
+            self.motor.join(timeout=2.0)
+        except Exception:  # noqa: BLE001
+            pass
+        self._soltar_seguro("fin del motor")
+        if self.atajos is not None:
+            try:
+                self.atajos.detener()
+            except Exception:  # noqa: BLE001
+                pass
+        if self.voz is not None and hasattr(self.voz, "cerrar"):
+            try:
+                self.voz.cerrar()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            self.sonidos.cerrar()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if not self.cfg.solo_lectura:
+                self.guardar_config()
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo guardar la configuración")
+        if getattr(self.args, "prueba_segundos", 0):
+            self._informe()
+
+    def _informe(self):
+        m = self.motor
+        r = m.stats.resumen() if hasattr(m, "stats") else {}
+        maq = getattr(m, "maquina", None)
+        r.update({
+            "version": VERSION,
+            "camara": getattr(getattr(m, "camara", None), "estado", ""),
+            "error_inicio": getattr(m, "error_inicio", None),
+            "estado_final": getattr(maq, "estado", None),
+            "todo_suelto": self.salida.todo_suelto(),
+            "simulada": self.simulada,
+            "reinicios": self.reinicios,
+        })
+        log.info("Informe: %s", r)
+        try:
+            print(json.dumps(r, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _acepta_urgente(f) -> bool:
+    try:
+        import inspect
+        return "urgente" in inspect.signature(f).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _generador_cara_dibujada():
+    """Para ``--camara-falsa``: siempre la misma cara dibujada (la reconoce la detección real),
+    así se puede probar el programa entero sin cámara."""
+    try:
+        from ..autoprueba import cara_dibujada
+        img = cara_dibujada()
+    except Exception:  # noqa: BLE001
+        return None
+    return lambda _t: img
+
+
+def correr(args) -> int:
+    """Punto de entrada que llama ``app.main`` (una sola copia abierta; mutex propio en ensayo)."""
+    from ..sistema import ventanas_win
+    mutex = K.MUTEX + ("Ensayo" if getattr(args, "simular", False) else "")
+    if not ventanas_win.instancia_unica(mutex):
+        if getattr(args, "prueba_segundos", 0):
+            try:
+                print(json.dumps({"error": "ya abierto"}))
+            except Exception:  # noqa: BLE001
+                pass
+            return 2
+        ventanas_win.traer_al_frente(K.NOMBRE_APP)
+        _mensaje(t("aviso_ya_abierto"))
+        return 0
+    try:
+        app = App(args)
+    except Exception:  # noqa: BLE001
+        log.exception("No se pudo abrir Lycan Face Control")
+        if not getattr(args, "prueba_segundos", 0):
+            _mensaje(t("aviso_no_abre"), error=True)
+        return 1
+    return app.correr()
+
+
+def _mensaje(texto: str, error: bool = False):
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        r = tk.Tk()
+        r.withdraw()
+        (messagebox.showerror if error else messagebox.showinfo)(K.NOMBRE_APP, texto, parent=r)
+        r.destroy()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(1)

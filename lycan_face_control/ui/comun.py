@@ -143,6 +143,31 @@ def area_de_trabajo(ventana) -> tuple[int, int, int, int]:
         return (0, 0, ventana.winfo_screenwidth(), ventana.winfo_screenheight() - 40)
 
 
+def area_libre(app, ventana) -> tuple[int, int, int, int]:
+    """Área de trabajo sin la franja de la barra de acciones, para que las ventanas grandes
+    (Opciones, Ayuda, Calibración) no queden debajo de la barra."""
+    l, a, d, ab = area_de_trabajo(ventana)
+    barra = getattr(app, "barra", None)
+    win = getattr(barra, "win", None)
+    try:
+        if win is not None and win.winfo_exists() and win.winfo_viewable():
+            pos = app.cfg.datos["barra"].get("posicion", "derecha")
+            w, h = win.winfo_width(), win.winfo_height()
+            if pos in ("derecha", "izquierda"):
+                # se deja el mismo margen a ambos lados para que la ventana quede centrada
+                d -= w + 16
+                l += w + 16
+            elif pos == "arriba":
+                a += h + 16
+            else:
+                ab -= h + 16
+    except (tk.TclError, AttributeError, KeyError):
+        pass
+    if d - l < 600:
+        return area_de_trabajo(ventana)
+    return l, a, d, ab
+
+
 # --------------------------------------------------------------------------- botón grande
 class BotonGrande(tk.Label):
     """Botón grande hecho con una etiqueta (se ve igual en todos los Windows y se puede resaltar).
@@ -207,6 +232,20 @@ class BotonGrande(tk.Label):
             self.configure(bg=self.tema.acento, fg=self.tema.sobre_color)
         else:
             self.configure(bg=self._color, fg=self._texto_color)
+
+    def _pintar_fondo(self):
+        if self._activo:
+            self.configure(bg=self.tema.acento, fg=self.tema.sobre_color)
+        else:
+            self.configure(bg=self._color, fg=self._texto_color)
+
+    def destello(self):
+        """Señal visible de "elegido" durante 250 ms (no cambia el estado del botón)."""
+        try:
+            self.configure(bg=self.tema.texto, fg=self.tema.fondo)
+            self.after(250, lambda: self.winfo_exists() and self._pintar_fondo())
+        except tk.TclError:
+            pass
 
     def resaltar(self, si: bool):
         if si == self._resaltado:
