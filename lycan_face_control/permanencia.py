@@ -14,7 +14,12 @@ Dos maneras de contar:
 2. **Por objetivo** (botones propios: barra, teclas, frases, "Reanudar"): el contador sigue
    mientras el puntero esté dentro del rectángulo del objetivo ampliado con una franja del 12 %;
    no exige activación para pasar de un botón a otro. Para repetir el mismo botón hay que salir
-   de él o esperar otra permanencia completa.
+   de él y volver. Ronda 3 de arreglos: la repetición de teclas al quedarse encima viene
+   **apagada** (quien se cansa y descansa con el puntero sobre el teclado llenaba el texto de
+   «aaaa»); con ``teclado.repetir_teclas`` encendida, la repetición espera 2,5 veces la
+   permanencia y se detiene tras 2 repeticiones (hay que salir y volver). Espacio y Enter nunca se
+   repiten. Además el contador de un botón tiene el mismo **margen** que el modo libre: si el
+   temblor saca el puntero un instante (menos de 150 ms) y vuelve, el contador sigue.
 
 El anillo solo se muestra desde los 200 ms (antes no, para que no parpadee con cada pausa corta).
 """
@@ -24,6 +29,9 @@ import math
 from dataclasses import dataclass
 
 FRANJA_OBJETIVO = 0.12
+REPETIR_FACTOR = 2.5          # una repetición espera 2,5 veces la permanencia de la tecla
+REPETIR_MAX = 2               # y como mucho 2 repeticiones seguidas (luego, salir y volver)
+NUNCA_REPETIR = ("tecla:espacio", "tecla:enter")
 ARMAR_SOSTENIDO_S = 0.25      # hay que estar lejos del último disparo este tiempo seguido para armar
 
 
@@ -42,6 +50,8 @@ class Objetivo:
 
     @property
     def se_repite(self) -> bool:
+        if self.id in NUNCA_REPETIR:
+            return False
         return self.id.startswith("tecla:") if self.repetir is None else bool(self.repetir)
 
     def contiene(self, x: float, y: float, franja: float = 0.0) -> bool:
@@ -83,13 +93,14 @@ class EstadoPermanencia:
 class Permanencia:
     def __init__(self, tiempo_s: float = 1.0, radio_px: float = 30.0, recuperacion_s: float = 1.0,
                  margen_ms: float = 150.0, anillo_desde_ms: float = 200.0, alto_pantalla: int = 1080,
-                 tiempo_objetivo_s: float = 1.0):
+                 tiempo_objetivo_s: float = 1.0, repetir_teclas: bool = False):
         self.tiempo_s = float(tiempo_s)
         self.radio = max(float(radio_px), 1.0) * float(alto_pantalla) / 1080.0
         self.recuperacion_s = float(recuperacion_s)
         self.margen_s = float(margen_ms) / 1000.0
         self.anillo_desde_s = float(anillo_desde_ms) / 1000.0
         self.tiempo_objetivo_s = float(tiempo_objetivo_s)
+        self.repetir_teclas = bool(repetir_teclas)
         self.distancia_activacion = 2.0 * self.radio
         # libre
         self._ancla = None
@@ -104,12 +115,15 @@ class Permanencia:
         # por objetivo
         self._obj = None
         self._t_obj = None
+        self._repeticiones = 0
+        self._t_fuera_obj = None          # el puntero salió del objetivo (margen)
 
     @classmethod
     def desde_config(cls, cfg: dict, alto_pantalla: int = 1080):
         p = cfg["permanencia"]
         return cls(p["tiempo_s"], p["radio_px"], p["recuperacion_s"], p["margen_ms"], p["anillo_desde_ms"],
-                   alto_pantalla, cfg["barra"]["permanencia_s"])
+                   alto_pantalla, cfg["barra"]["permanencia_s"],
+                   bool((cfg.get("teclado") or {}).get("repetir_teclas", False)))
 
     # ------------------------------------------------------------ control
     def ajustar_radio_minimo(self, minimo_px: float, factor_armar: float = 1.5):
@@ -156,6 +170,7 @@ class Permanencia:
         self._previo = None
         self._obj = None
         self._t_obj = None
+        self._t_fuera_obj = None
 
     def armar(self):
         self._armado = True
@@ -189,9 +204,17 @@ class Permanencia:
             else:
                 self._t_lejos = None
         if objetivo is not None:
+            self._t_fuera_obj = None
             return self._por_objetivo(objetivo, (x, y), t, tiempo_objetivo_s)
+        if self._obj is not None:
+            # margen: un cuadro de temblor fuera del botón no reinicia su contador
+            if self._t_fuera_obj is None:
+                self._t_fuera_obj = t
+            if t - self._t_fuera_obj <= self.margen_s + 1e-9:
+                return EstadoPermanencia(armado=self._armado)
         self._obj = None
         self._t_obj = None
+        self._t_fuera_obj = None
         if not libre:
             self._ancla = None
             self._t_inicio = None
@@ -204,8 +227,11 @@ class Permanencia:
         if self._obj is None or self._obj.id != obj.id:
             self._obj = obj
             self._t_obj = t
+            self._repeticiones = 0
         dur = obj.tiempo_s if obj.tiempo_s is not None else (tiempo_s or self.tiempo_objetivo_s)
         dur = max(float(dur), 0.05)
+        if self._repeticiones > 0:
+            dur *= REPETIR_FACTOR
         l, tp, r, b = obj.rect
         centro = ((l + r) / 2.0, (tp + b) / 2.0)
         if self._t_obj is None:
@@ -213,8 +239,14 @@ class Permanencia:
             return EstadoPermanencia(0.0, False, False, obj.id, centro, self._armado)
         transcurrido = t - self._t_obj
         if transcurrido >= dur - 1e-9:
-            # las teclas se repiten tras otra permanencia completa; los demás botones no
-            self._t_obj = t if obj.se_repite else None
+            # con la repetición encendida las teclas se repiten (más despacio y hasta un tope); los
+            # demás botones nunca: hay que salir y volver
+            repite = self.repetir_teclas and obj.se_repite and self._repeticiones < REPETIR_MAX
+            if repite:
+                self._t_obj = t
+                self._repeticiones += 1
+            else:
+                self._t_obj = None
             return EstadoPermanencia(1.0, True, True, obj.id, centro, self._armado)
         prog = max(transcurrido / dur, 0.0)
         return EstadoPermanencia(prog, transcurrido >= self.anillo_desde_s, False, obj.id, centro, self._armado)

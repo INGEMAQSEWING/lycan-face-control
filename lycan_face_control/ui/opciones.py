@@ -40,7 +40,7 @@ def sens_de_velocidad(n: int) -> tuple[float, float]:
     """Velocidad 1..10 -> (sens_x, sens_y). 3 = valores de fábrica (1,0 y 1,2)."""
     n = min(max(int(n), VELOCIDAD_MIN), VELOCIDAD_MAX)
     sx = SENS_VELOCIDAD[n - 1]
-    sy = round(min(sx * 1.2, 3.0), 2)
+    sy = round(min(sx * 1.2, 3.3), 2)      # tope 3,3: cada nivel sube también en vertical
     return sx, sy
 
 
@@ -154,6 +154,7 @@ def controles(pestana: str, gesto: str = "boca") -> list:
             ("opc", "teclado.distribucion", "op_distribucion", OPCIONES["teclado.distribucion"],
              lambda v: t(f"op_dist_{v}")),
             ("num", "teclado.permanencia_s", "op_tecla_tiempo", 0.1, _seg),
+            ("bool", "teclado.repetir_teclas", "op_repetir_teclas", None, None),
             ("bool", "teclado.barrido", "op_barrido", None, None),
             ("num", "teclado.barrido_paso_s", "op_barrido_paso", 0.1, _seg),
             ("opc", "teclado.modo_escritura", "op_escritura", OPCIONES["teclado.modo_escritura"],
@@ -236,6 +237,8 @@ def atajos_validos(atajos: dict, revisar_teclado: bool = True) -> str | None:
         return None
     usados: dict = {}
     for nombre, texto in atajos.items():
+        if not isinstance(texto, str) or not texto.strip():
+            return t("op_atajo_vacio")
         try:
             combo = interpretar(texto)
         except AtajoInvalido as e:
@@ -251,7 +254,10 @@ def atajos_validos(atajos: dict, revisar_teclado: bool = True) -> str | None:
             except Exception:  # noqa: BLE001
                 car = None
             if car:
-                return t("op_atajo_invalido", texto=texto, motivo=f"escribe «{car}» en su teclado")
+                from ..sistema.atajos import TECLA_MUERTA
+                if car == TECLA_MUERTA:
+                    return t("op_atajo_acento", texto=texto)
+                return t("op_atajo_escribe", texto=texto, car=car)
     return None
 
 

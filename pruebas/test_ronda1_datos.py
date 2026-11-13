@@ -174,6 +174,9 @@ def test_la_aplicacion_avisa_una_vez_si_la_voz_no_es_en_espanol():
     class AppMin:
         sistema = False
         hablar = A.App.hablar
+        _mostrar_no_dicho = A.App._mostrar_no_dicho
+        teclado = None
+        ventana = None
 
         def __init__(self):
             self.voz = VozIngles()

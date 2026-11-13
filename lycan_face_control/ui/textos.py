@@ -127,6 +127,7 @@ TXT: dict[str, str] = {
     "aviso_activo": "Activo.",
     "aviso_sin_cara": "No veo su cara. Acérquese a la cámara o revise la luz.",
     "aviso_cara_vuelve": "Ya veo su cara otra vez.",
+    "aviso_no_dicho": "No se pudo decir en voz alta. Muéstrele la pantalla a la persona.",
     "aviso_otra_cara": "Veo una cara distinta a la de la persona que usa el programa. Pausé para no hacer clics.",
     "aviso_cara_distinta": "Parece que hay otra cara frente a la cámara. Solté todo; espero un momento antes de seguir.",
     "aviso_recomendar_calibrar": "Le recomiendo calibrar para que el puntero se ajuste a su forma de moverse.",
@@ -150,7 +151,9 @@ TXT: dict[str, str] = {
     "aviso_motor_reintento": "Estoy intentando arrancar la detección otra vez…",
     "aviso_camara_perdida": "Perdí la cámara. Revise que esté conectada; sigo intentando.",
     "aviso_error_inicio": "No pude abrir la cámara ni la detección de la cara. Revise que la cámara esté conectada.",
-    "aviso_no_camara": "No encuentro la cámara. Revise que esté conectada y que otro programa no la esté usando.",
+    "aviso_no_camara": ("No encuentro la cámara. Revise que esté conectada y que otro programa no la esté usando. "
+                        "Si sigue igual, en Configuración de Windows › Privacidad y seguridad › Cámara active "
+                        "«Permitir que las aplicaciones de escritorio accedan a la cámara»."),
     "aviso_camara_ocupada": "Otro programa está usando la cámara. Ciérrelo para que yo pueda verla.",
     "aviso_teclado_no_disponible": "El teclado en pantalla no está disponible en esta versión.",
     "aviso_sin_voz": ("No encontré una voz en español en Windows: uso la que hay, aunque suene en otro "
@@ -178,7 +181,7 @@ TXT: dict[str, str] = {
     "cal_posicion_lejos": "Acérquese un poco a la cámara.",
     "cal_posicion_cerca": "Aléjese un poco de la cámara.",
     "cal_posicion_bien": "Muy bien, quédese así.",
-    "cal_posicion_timeout": "No logré verlo a buena distancia; sigo de todas formas.",
+    "cal_posicion_timeout": "No logré ver su cara a buena distancia; sigo de todas formas.",
     "cal_centro_titulo": "Centro",
     "cal_centro": "Mire al frente, a la mitad de la pantalla, y quédese quieto.",
     "cal_izq_titulo": "Izquierda",
@@ -235,7 +238,7 @@ TXT: dict[str, str] = {
 
     # ---- asistente de primera vez ----
     "asis_titulo": "Bienvenida",
-    "asis_1_titulo": "Bienvenido a Lycan Face Control",
+    "asis_1_titulo": "Le damos la bienvenida a Lycan Face Control",
     "asis_1": ("Este programa le permite manejar el computador solo con la cabeza y la cara: mover el "
                "puntero, hacer clic sin manos y escribir o hablar con un teclado en pantalla.\n\n"
                "Todo ocurre en este computador. No se usa internet y el video nunca se guarda."),
@@ -307,7 +310,7 @@ TXT: dict[str, str] = {
     "op_dist_frecuencia": "Las más usadas primero",
     "op_tecla_tiempo": "Tiempo para elegir una tecla",
     "op_barrido": "Barrido (las teclas se iluminan solas)",
-    "op_barrido_paso": "Velocidad del barrido",
+    "op_barrido_paso": "Espera en cada fila o tecla del barrido (más = más lento)",
     "op_escritura": "Al escribir en otro programa",
     "op_escritura_mensaje": "Enviar el mensaje completo",
     "op_escritura_directo": "Cada letra al instante",
@@ -348,6 +351,9 @@ TXT: dict[str, str] = {
     "op_atajo_ventana": "Mostrar esta ventana",
     "op_atajo_salir": "Salir",
     "op_atajo_invalido": "El atajo «{texto}» no es válido: {motivo}.",
+    "op_atajo_vacio": "Escriba un atajo, por ejemplo Ctrl+Alt+Espacio.",
+    "op_atajo_escribe": "El atajo «{texto}» no sirve: en su teclado esa combinación escribe «{car}». Elija otra letra.",
+    "op_atajo_acento": "El atajo «{texto}» no sirve: en su teclado esa combinación pone un acento. Elija otra letra.",
     "op_apagado": "Apagado",
     "op_minutos": "{n} min",
     "op_segundos": "{n} s",
@@ -366,6 +372,7 @@ TXT: dict[str, str] = {
     "accion_hablar": "Hablar (en el teclado)",
     "accion_siguiente": "Avanzar el barrido",
 
+    "op_repetir_teclas": "Repetir la tecla si se queda encima (más despacio y hasta 2 veces)",
     "op_aprender": "Aprender mis palabras para sugerirlas",
 
     # ---- teclado en pantalla ----
@@ -424,6 +431,10 @@ TXT: dict[str, str] = {
     "tec_limpiado": "Borré el texto. «Deshacer» lo recupera.",
     "tec_otra_ventana": "Eligió otra ventana: empiezo un mensaje nuevo para no borrar nada allá.",
     "tec_solo_com_cerrar": "En «solo comunicación» el teclado se queda abierto. El cuidador lo puede cambiar en Opciones.",
+    "tec_lleno": "El mensaje llegó al máximo: hable, escriba o copie para seguir.",
+    "tec_ayuda_barrido": ("Las filas se iluminan solas. Cierre los ojos un momento largo para entrar a una fila "
+                          "y otra vez para elegir. «↩ Volver» regresa a las filas. «Pausa»: para seguir, cierre "
+                          "los ojos dos veces seguidas."),
     "tec_ayuda": ("Quédese quieto sobre una tecla para escribirla. «´» pone tilde a la vocal que siga "
                   "(dos veces: ü). Con «123» aparecen los números y signos. «Hablar» lo dice en voz alta y «Escribir» "
                   "lo envía al programa que estaba usando."),
@@ -478,8 +489,9 @@ TXT: dict[str, str] = {
     "ayuda_gesto_largo": "sostenido 2 s: {accion}",
     "ayuda_uso": ("• Mover: gire la cabeza; el puntero la sigue.\n"
                   "• Clic: quédese quieto un momento (el anillo se llena) o haga el gesto de clic.\n"
-                  "• Barra de acciones: elija Doble, Derecho, Arrastrar o Desplazar antes de hacer clic. "
-                  "Después vuelve sola al clic normal.\n"
+                  "• {barra}\n"
+                  "• Desplazar: elíjalo en la barra e incline la cabeza hacia arriba o hacia abajo; la página "
+                  "se mueve sola. Para salir elija «Terminar» (también termina solo si no desplaza un rato).\n"
                   "• Teclado: escriba, hable con la voz del computador o use las frases rápidas. «´» pone "
                   "tilde a la vocal que siga (dos veces: ü); con «123» aparecen los números y signos.\n"
                   "• {pausa}\n"
@@ -510,7 +522,10 @@ TXT: dict[str, str] = {
                         "Opciones › Gestos o apague ese gesto.\n"
                         "• No llega a los bordes: repita la calibración o suba la velocidad.\n"
                         "• Con poca luz, sostenga el parpadeo largo un poco más.\n"
-                        "• No escribe en un programa: puede estar abierto como administrador.\n\n"
+                        "• No escribe en un programa: puede estar abierto como administrador.\n"
+                        "• «No encuentro la cámara» con la cámara conectada: en Configuración de Windows › "
+                        "Privacidad y seguridad › Cámara active «Permitir que las aplicaciones de escritorio "
+                        "accedan a la cámara».\n\n"
                         "Con honestidad: si la persona pierde también el control de los párpados, este "
                         "programa ya no le sirve y hacen falta otros sistemas, como los seguidores de "
                         "mirada especializados."),
@@ -519,6 +534,10 @@ TXT: dict[str, str] = {
                      "Todo funciona sin internet; el video nunca se guarda.\n\n"
                      "Lista de palabras: FrequencyWords (Hermit Dave, a partir de OpenSubtitles), "
                      "licencia CC BY-SA 4.0."),
+    "barra_uso_vuelve": ("Doble, Derecho o Arrastrar: elíjalo en la barra de acciones y luego haga clic donde "
+                         "quiera. Después vuelve solo al clic normal."),
+    "barra_uso_fijo": ("Doble, Derecho o Arrastrar: elíjalo en la barra de acciones y luego haga clic donde "
+                       "quiera. Sigue en ese modo hasta que elija «Clic» en la barra."),
     "pausa_con_gesto": ("Pausa: {como}. Para reanudar, sostenga ese gesto unos {reanudar} segundos y suéltelo, o "
                         "quédese quieto sobre «Reanudar». Un bostezo muy largo no cuenta."),
     "pausa_sin_gesto": ("Pausa: elija «Pausar» con la cabeza (ningún gesto tiene la pausa; vea la pestaña Gestos). "
@@ -556,6 +575,12 @@ def atajos_kw(cfg: dict | None) -> dict:
     cuidador los cambió)."""
     a = (cfg or {}).get("atajos") or {}
     return {k: (a.get(k) or v) for k, v in ATAJOS_FABRICA.items()}
+
+
+def barra_uso(cfg: dict | None) -> str:
+    """La línea de la barra de la Ayuda según «seguir en ese modo» (barra.modo_fijo)."""
+    fijo = bool(((cfg or {}).get("barra") or {}).get("modo_fijo", False))
+    return TXT["barra_uso_fijo" if fijo else "barra_uso_vuelve"]
 
 
 def pausa_uso(cfg: dict | None) -> str:

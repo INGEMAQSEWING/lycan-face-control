@@ -451,14 +451,31 @@ class App:
             except Exception:  # noqa: BLE001
                 log.exception("La voz falló")
         if not ok:
-            self.mostrar_aviso(texto, 10)
+            self._mostrar_no_dicho(texto)
         elif getattr(self.voz, "voz_espanol", None) is False:
             # hay voz, pero no en español: se avisa una vez y el texto se ve en grande siempre
             if not getattr(self, "_avisado_sin_voz", False):
                 self._avisado_sin_voz = True
                 self.mostrar_aviso(t("aviso_sin_voz"), 10)
             else:
-                self.mostrar_aviso(texto, 10)
+                self._mostrar_no_dicho(texto, avisar=False)
+
+    def _mostrar_no_dicho(self, texto: str, avisar: bool = True):
+        """Lo que la voz no dijo se muestra entero y en grande: con el teclado abierto, sobre la caja
+        del texto (con la letra ajustada al largo) y un aviso corto en la franja; si no, en la
+        ventana principal (ronda 3: antes iba a la franja, de una fila, y se cortaba)."""
+        tec = self.teclado
+        if tec is not None and getattr(tec, "win", None) is not None and hasattr(tec, "mostrar_grande"):
+            try:
+                tec.mostrar_grande(texto, 12)
+                if avisar:
+                    tec.mostrar_aviso(t("aviso_no_dicho"), 6)
+                if self.ventana is not None:
+                    self.ventana.mostrar_aviso(texto, 10)
+                return
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudo mostrar en grande lo que no se dijo")
+        self.mostrar_aviso(texto, 10)
 
     def _revisar_voz(self):
         """Frases que la voz no pudo decir (falló después de arrancar): se muestran en grande."""
@@ -472,7 +489,7 @@ class App:
                 break
             except Exception:  # noqa: BLE001
                 break
-            self.mostrar_aviso(texto, 10)
+            self._mostrar_no_dicho(texto)
 
     def _crear_voz(self):
         try:

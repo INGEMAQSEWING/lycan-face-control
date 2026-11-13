@@ -63,27 +63,31 @@ class AtajoInvalido(ValueError):
     pass
 
 
+TECLA_MUERTA = "´"         # la combinación pone un acento (tecla muerta) en vez de una letra
+
+
 def interpretar(texto: str) -> tuple[int, int]:
     """'Ctrl+Alt+T' -> (MOD_CONTROL|MOD_ALT, ord('T'))."""
     if not isinstance(texto, str) or not texto.strip():
-        raise AtajoInvalido("atajo vacío")
+        raise AtajoInvalido("escriba un atajo, por ejemplo Ctrl+Alt+Espacio")
     mods, vk = 0, None
     for parte in (p.strip() for p in texto.split("+")):
         up = parte.upper()
         if up in MODS:
             mods |= MODS[up]
         elif vk is not None:
-            raise AtajoInvalido("el atajo lleva más de una tecla")
+            raise AtajoInvalido("lleva más de una tecla; use una sola, por ejemplo Ctrl+Alt+T")
         elif up in TECLAS_ESPECIALES:
             vk = TECLAS_ESPECIALES[up]
         elif len(up) == 1 and up.isascii() and up.isalnum():
             vk = ord(up)
         else:
-            raise AtajoInvalido(f"tecla desconocida: {parte}")
+            raise AtajoInvalido(f"no reconozco «{parte}». Use una letra sin tilde ni ñ, un número, "
+                                "Espacio, Inicio o Fin")
     if vk is None:
-        raise AtajoInvalido("falta la tecla")
+        raise AtajoInvalido("le falta la tecla, por ejemplo Ctrl+Alt+T")
     if not mods & (MOD_CONTROL | MOD_ALT | MOD_WIN):
-        raise AtajoInvalido("el atajo debe llevar Ctrl o Alt")
+        raise AtajoInvalido("tiene que llevar Ctrl o Alt")
     return mods, vk
 
 
@@ -145,7 +149,7 @@ def produce_caracter(mods: int, vk: int, hkl: int | None = None) -> str | None:
     if n == 0:
         return None
     if n < 0:
-        return "(tecla muerta)"
+        return TECLA_MUERTA
     txt = buf.value[:n]
     return txt if any(ord(c) >= 0x20 for c in txt) else None
 
@@ -206,8 +210,9 @@ class HiloAtajos(threading.Thread):
             usados[(mods, vk)] = nombre
             car = produce_caracter(mods, vk)
             if car:
-                self.fallidos.append((nombre, f"El atajo {texto} escribe «{car}» en su teclado; no se usó. "
-                                              f"Puede cambiarlo en Opciones > Atajos."))
+                que = "pone un acento" if car == TECLA_MUERTA else f"escribe «{car}»"
+                self.fallidos.append((nombre, f"El atajo {texto} no se usó: en su teclado esa combinación "
+                                              f"{que}. Puede cambiarlo en Opciones > Atajos."))
                 continue
             if _user32.RegisterHotKey(None, i, mods | MOD_NOREPEAT, vk):
                 self.registrados[i] = nombre

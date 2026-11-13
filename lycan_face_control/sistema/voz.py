@@ -43,7 +43,8 @@ VT_SPEAK, VT_SETRATE, VT_SETVOLUME, VT_WAIT = 20, 28, 30, 32
 CLSID_SPVOICE = "{96749377-3391-11D2-9EE3-00C04F797396}"
 IID_ISPVOICE = "{6C44DF74-72B9-4992-A1EC-EF996E0422D4}"
 CREATE_NO_WINDOW = 0x08000000
-ESPERA_INICIO_S = 2.0
+ESPERA_INICIO_S = 0.3          # no congela la interfaz si la voz tarda en arrancar (la frase
+                               # que se pide mientras tanto queda en la cola o va a ``fallidos``)
 MAX_TEXTO = 2000           # igual que teclado_logica.MAX_TEXTO
 
 
@@ -430,6 +431,10 @@ class Voz:
                 if orden[0] == "cerrar":
                     break
                 if m is None:
+                    # sin ningún motor: la frase que se pidió mientras arrancaba no se pierde en
+                    # silencio (ronda 3), va a ``fallidos`` y la interfaz la muestra en grande
+                    if orden[0] == "hablar" and orden[1]:
+                        self.fallidos.put(orden[1])
                     continue
                 if orden[0] == "config":
                     pref = self.cfg.get("nombre")

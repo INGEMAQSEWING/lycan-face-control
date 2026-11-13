@@ -55,8 +55,21 @@ DT_MAX = 0.25                   # un hueco más largo entre cuadros no acumula u
 # Temblor de FaceMesh con la cabeza quieta (desviación por eje, en unidades de pose): medido con la
 # serie real de pruebas/datos (0,002-0,004 a io≈75 px). La calibración guarda el de la persona.
 TEMBLOR_FABRICA = 0.003
+# Ronda 3: una calibración SIN temblor medido (hecha a mano o de antes de la ronda 2) usa un valor
+# del lado seguro. Con la zona muerta del centro (que ya no se usa fuera del modo Palanca) el
+# temblor de la cabeza quieta justo en el centro quedaba escondido; con un rango calibrado
+# pequeño y la serie real "5.0" (0,0042) el valor de fábrica daba un clic fantasma en 5 minutos.
+TEMBLOR_SIN_MEDIR = 0.0045
 TEMBLOR_MIN, TEMBLOR_MAX = 0.001, 0.02
 DT_TIPICO = 0.05                # 20 cuadros/s (para estimar cuánto atenúa el filtro)
+# Ronda 3: con poca luz la cámara baja a 8-12 cuadros/s y el filtro deja pasar más temblor. Se
+# mide el intervalo real (media móvil) y, si es claramente mayor que el supuesto, se recalcula el
+# temblor esperado (zona muerta, y la máquina agranda el radio de la permanencia). Solo hacia
+# arriba: si luego vuelve a ir rápido, queda del lado seguro hasta la siguiente configuración.
+DT_MEDIO_ALFA = 0.05
+DT_RECALCULAR_S = 2.0
+DT_CAMBIO = 0.2                 # se recalcula si el intervalo real pasa 20 % del supuesto
+DT_TOPE = 0.15
 ZONA_MUERTA_SIGMAS = 1.0        # zona muerta >= 1 x temblor filtrado en px (el radio de la permanencia hace el resto)
 JOYSTICK_ZONA_MIN = 0.12        # zona muerta del joystick (fracción del rango cómodo)
 JOYSTICK_SIGMAS = 5.0           # ...o 5 x el temblor filtrado en u, lo que sea mayor
@@ -69,7 +82,7 @@ def _alfa_filtro(cutoff: float, dt: float) -> float:
     return 1.0 / (1.0 + tau / dt)
 
 
-def _temblor(v):
+def _temblor(v, defecto: float = TEMBLOR_FABRICA):
     """(σ_yaw, σ_pitch) en unidades de pose, dentro de límites razonables."""
     out = []
     try:
@@ -80,9 +93,9 @@ def _temblor(v):
         try:
             x = float(vals[i])
         except (IndexError, TypeError, ValueError):
-            x = TEMBLOR_FABRICA
+            x = defecto
         if not math.isfinite(x) or x <= 0:
-            x = TEMBLOR_FABRICA
+            x = defecto
         out.append(min(max(x, TEMBLOR_MIN), TEMBLOR_MAX))
     return tuple(out)
 
@@ -94,11 +107,16 @@ def zona_muerta_escalada(zona_px: float, alto: int) -> float:
 
 class Puntero:
     def __init__(self, mapeo: MapeoCabeza, modo: str = "absoluto", suavidad: int = 3, zona_muerta_px: float = 4.0,
-                 aceleracion: int = 0, posicion_inicial=None, temblor=None):
+                 aceleracion: int = 0, posicion_inicial=None, temblor=None,
+                 temblor_defecto: float = TEMBLOR_FABRICA):
         self.mapeo = mapeo
         self.modo = modo if modo in MODOS else "absoluto"
-        self.temblor = _temblor(temblor)
+        self.temblor = _temblor(temblor, temblor_defecto)
         self._zona_cfg = zona_muerta_escalada(zona_muerta_px, mapeo.monitor.alto)
+        self._dt_calc = DT_TIPICO                 # intervalo con que se calculó el temblor
+        self._dt_medio = DT_TIPICO                # intervalo real entre cuadros (media móvil)
+        self._t_recalc = None
+        self.temblor_cambio = False               # la máquina reajusta el radio de la permanencia
         self.poner_suavidad(suavidad)
         self.aceleracion = int(min(max(int(aceleracion), 0), len(ACELERACION_K) - 1))
         if posicion_inicial is None:
@@ -124,8 +142,9 @@ class Puntero:
     def desde_config(cls, cfg: dict, mapeo: MapeoCabeza, posicion_inicial=None, calibracion: dict | None = None):
         p = cfg["puntero"]
         temblor = calibracion.get("temblor") if isinstance(calibracion, dict) else None
+        defecto = TEMBLOR_SIN_MEDIR if isinstance(calibracion, dict) else TEMBLOR_FABRICA
         return cls(mapeo, p["modo"], p["suavidad"], p["zona_muerta_px"], p["aceleracion"], posicion_inicial,
-                   temblor)
+                   temblor, defecto)
 
     # ------------------------------------------------------------ ajustes
     def poner_suavidad(self, nivel: int):
@@ -138,7 +157,7 @@ class Puntero:
     def _calcular_temblor(self):
         """Temblor esperado del puntero quieto (px, desviación por eje tras el filtro) y, con él,
         la zona muerta en pantalla y la del joystick."""
-        a = _alfa_filtro(SUAVIDAD_MIN_CUTOFF[self.suavidad - 1], DT_TIPICO)
+        a = _alfa_filtro(SUAVIDAD_MIN_CUTOFF[self.suavidad - 1], self._dt_calc)
         atenua = math.sqrt(a / (2.0 - a))           # ruido blanco tras un filtro de primer orden
         gx, gy = self.mapeo.ganancia_px()
         sx, sy = self.temblor
@@ -237,6 +256,8 @@ class Puntero:
         fpitch = self._fy(pitch, t)
         fx, fy = self.mapeo.a_pixeles(fyaw, fpitch)
         dt = DT_MAX if self._t_ant is None else min(max(t - self._t_ant, 1e-3), DT_MAX)
+        if self._t_ant is not None and dt < 0.2:
+            self._medir_ritmo(t, dt)
         # rapidez de la cabeza (posición filtrada, cuadro a cuadro) para la aceleración
         if self.filtrado is not None and self._t_ant is not None:
             self._v_filtrada = math.hypot(fx - self.filtrado[0], fy - self.filtrado[1]) / dt
@@ -260,6 +281,20 @@ class Puntero:
         while self.historial and self.historial[0][0] < t - HISTORIAL_S:
             self.historial.popleft()
         return self._actualizar_entero()
+
+    def _medir_ritmo(self, t: float, dt: float):
+        self._dt_medio += DT_MEDIO_ALFA * (dt - self._dt_medio)
+        if self._t_recalc is None:
+            self._t_recalc = t
+            return
+        if t - self._t_recalc < DT_RECALCULAR_S:
+            return
+        self._t_recalc = t
+        nuevo = min(self._dt_medio, DT_TOPE)
+        if nuevo > self._dt_calc * (1.0 + DT_CAMBIO):
+            self._dt_calc = nuevo
+            self._calcular_temblor()
+            self.temblor_cambio = True
 
     def _actualizar_entero(self):
         nuevo = (int(round(self._pos[0])), int(round(self._pos[1])))

@@ -497,9 +497,32 @@ class VentanaTeclado:
         return None
 
     def mostrar_grande(self, texto: str, segundos: float = GRANDE_S):
+        """En grande sobre la caja del texto. Un texto largo (el mensaje que la voz no pudo decir)
+        achica la letra hasta que quepa (ronda 3); si ni con letra de 12 cabe, se muestra el final
+        («…» delante): el mensaje completo sigue en la caja y en la ventana principal."""
         c = self.caja_texto
         try:
-            self.lbl_grande.configure(text=texto, wraplength=max(c.ancho - 32, 100))
+            if not hasattr(self, "_f_grande"):
+                self._f_grande = self.lbl_grande.cget("font")
+            self.lbl_grande.configure(text=texto, wraplength=max(c.ancho - 32, 100), font=self._f_grande)
+            self.lbl_grande.update_idletasks()
+            if self.lbl_grande.winfo_reqheight() > c.alto:
+                for pt in (30, 24, 20, 17, 14, 12):
+                    self.lbl_grande.configure(font=(LETRA, pt, "bold"))
+                    self.lbl_grande.update_idletasks()
+                    if self.lbl_grande.winfo_reqheight() <= c.alto:
+                        break
+                else:
+                    lo, hi = 1, len(texto)            # el final más largo que cabe
+                    while lo < hi:
+                        mid = (lo + hi + 1) // 2
+                        self.lbl_grande.configure(text="…" + texto[-mid:])
+                        self.lbl_grande.update_idletasks()
+                        if self.lbl_grande.winfo_reqheight() <= c.alto:
+                            lo = mid
+                        else:
+                            hi = mid - 1
+                    self.lbl_grande.configure(text="…" + texto[-lo:])
             self.lbl_grande.place(x=c.x, y=c.y, width=c.ancho, height=c.alto)
             self.lbl_grande.lift()
         except tk.TclError:
@@ -725,15 +748,18 @@ class VentanaTeclado:
         """Aplica una operación de ``Escritura`` (``fn() -> Cambio``). En modo Directo solo si de
         verdad se puede enviar; si no, el texto del teclado queda como estaba. Devuelve el
         ``Cambio`` o None si no se aplicó."""
+        self.escritura.rechazado = False
         if not self._directo():
             cambio = fn()
             self._pintar_texto()
+            self._avisar_si_lleno()
             return cambio
         self._revisar_destino_directo()
         antes = copy.deepcopy(self.escritura)
         cambio = fn()
         if cambio.vacio:
             self._pintar_texto()
+            self._avisar_si_lleno()
             return cambio
         if not self._puede_enviar():
             self.escritura = antes
@@ -745,6 +771,11 @@ class VentanaTeclado:
         self._pintar_texto()
         return cambio
 
+    def _avisar_si_lleno(self):
+        if getattr(self.escritura, "rechazado", False):
+            self.escritura.rechazado = False
+            self.mostrar_aviso(t("tec_lleno"), 6)
+
     def _empezar_si_toca(self, tec=None):
         """Tras Hablar (modo Mensaje): la primera letra o sugerencia empieza un mensaje nuevo. Lo
         anterior queda en Deshacer (y en Repetir). Un espacio, un Enter o un signo que va pegado
@@ -752,7 +783,9 @@ class VentanaTeclado:
         if not self._empezar_nuevo:
             return
         self._empezar_nuevo = False
-        if tec is not None and (tec.tipo in ("espacio", "enter") or tec.valor in PUNTUACION_PEGADA):
+        # ojo: la tilde y ⇧ tienen valor "" y "" está "dentro" de cualquier texto: sin el
+        # ``tec.valor and`` se tomaban por un signo pegado y seguían el mensaje anterior
+        if tec is not None and (tec.tipo in ("espacio", "enter") or (tec.valor and tec.valor in PUNTUACION_PEGADA)):
             return
         if self.escritura.texto and not self._directo():
             self.escritura.limpiar()
@@ -837,7 +870,10 @@ class VentanaTeclado:
             if e.texto and self._operar(self.escritura.limpiar) is not None:
                 self.mostrar_aviso(t("tec_limpiado"), 4)
         elif nombre == "ayuda":
-            self.mostrar_aviso(t("tec_ayuda"), 20)
+            if self.barrido_activo:
+                self.mostrar_aviso(t("tec_ayuda_barrido"), 12)
+            else:
+                self.mostrar_aviso(t("tec_ayuda"), 20)
         elif nombre == "hablar":
             texto = e.texto.strip()
             if not texto:

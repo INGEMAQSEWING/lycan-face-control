@@ -19,7 +19,8 @@ Lycan Developments / EDWIN CNC — versión 1.0.0 — código abierto (licencia 
 | Mover el puntero | Gire la cabeza a los lados y arriba o abajo, con movimientos cómodos |
 | Hacer clic | Quédese quieto un momento sobre algo (se llena un anillo) **o** abra la boca un momento (más de medio segundo) |
 | Clic derecho | Levante las cejas |
-| Doble clic, arrastrar, desplazar | Elíjalos con la cabeza en la **barra de acciones** grande |
+| Doble clic, arrastrar | Elíjalos con la cabeza en la **barra de acciones** grande y luego haga clic donde quiera |
+| Desplazar una página | Elija **Desplazar** en la barra e incline la cabeza hacia arriba o hacia abajo; para salir elija **Terminar** (también termina solo si no desplaza un rato) |
 | Escribir y hablar | Abra el **Teclado**: teclas grandes en español (ñ, tildes), sugerencias de palabras, frases rápidas ("Sí", "No", "Tengo sed", "Tengo dolor"…) y los botones Hablar, Escribir, Copiar y Borrar |
 | Si solo puede parpadear | Use el **modo barrido** (vea *Si la persona solo puede parpadear*, abajo): las filas y las teclas se iluminan solas y un **parpadeo largo** elige |
 | Pausar | Mantenga la boca abierta 2 segundos y ciérrela. Para reanudar, ábrala unos 3 segundos y ciérrela, o quédese quieto sobre el botón grande "Reanudar". Un bostezo muy largo, o con los ojos cerrados, no cuenta |
@@ -84,8 +85,14 @@ Se puede repetir cuando quiera desde la ventana principal.
   Opciones › Gestos o apague ese gesto.
 - Cuando **usted** pausa (con el atajo o con el ratón), abrir la boca no la quita: así un bostezo, la comida
   o el aseo no reactivan el puntero. La quitan el botón "Reanudar" (con la cabeza) y el atajo.
-- Si otra persona se pone frente a la cámara, el programa suelta todo y espera un momento antes de
-  aceptar clics de esa cara.
+- Si otra persona se pone frente a la cámara, el programa suelta todo y espera un momento. Si esa cara no
+  se parece a la de la persona (tamaño y proporciones), se pausa solo y sigue cuando vuelve la persona;
+  si es la misma persona (por ejemplo, la acomodaron más cerca), elija «Reanudar».
+- Si la persona voltea la cabeza mucho más allá de lo cómodo (para mirarlo a usted, a la televisión o
+  para comer), el puntero se queda quieto y no hace clics hasta que vuelva a mirar la pantalla.
+- Si dice «No encuentro la cámara» con la cámara conectada, revise en Configuración de Windows ›
+  Privacidad y seguridad › Cámara que esté activado «Permitir que las aplicaciones de escritorio accedan
+  a la cámara».
 
 ### Si la persona solo puede parpadear
 

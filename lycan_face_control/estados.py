@@ -712,6 +712,13 @@ class Maquina:
         return st
 
     # ------------------------------------------------------------ ACTIVO
+    def _revisar_temblor(self):
+        """La cámara va más lenta de lo supuesto: el puntero recalculó su temblor y el radio de la
+        permanencia crece con él (no hay clics fantasma con la cabeza quieta)."""
+        if self.puntero.temblor_cambio:
+            self.puntero.temblor_cambio = False
+            self.perm.ajustar_radio_minimo(RADIO_SIGMAS * self.puntero.temblor_px)
+
     def _mirando_afuera(self, t: float, m) -> bool:
         """¿La cabeza está muy por fuera de su rango cómodo (mira a otro lado)? Con histéresis.
         Al volver, el deslizamiento del puntero no arma la permanencia."""
@@ -766,6 +773,7 @@ class Maquina:
             self._clic_gesto_congelado = False
             self.puntero.descongelar(t)
         pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
+        self._revisar_temblor()
         if self.puntero.cambio and sub not in SUBMODOS_SIN_PUNTERO:
             acc.append(Mover(*pos))
         # ---- eventos de gestos ----

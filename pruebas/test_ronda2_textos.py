@@ -14,7 +14,8 @@ UI = RAIZ / "lycan_face_control" / "ui"
 
 def _ayuda(seccion, cfg):
     """Igual que ui/ayuda.py arma el texto de una pestaña."""
-    return T.t(f"ayuda_{seccion}", version=VERSION, pausa=T.pausa_uso(cfg), **T.atajos_kw(cfg))
+    return T.t(f"ayuda_{seccion}", version=VERSION, pausa=T.pausa_uso(cfg), barra=T.barra_uso(cfg),
+               **T.atajos_kw(cfg))
 
 
 def test_la_ayuda_dice_los_atajos_que_estan_puestos():

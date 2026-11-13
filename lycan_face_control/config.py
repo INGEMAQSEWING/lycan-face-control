@@ -63,7 +63,8 @@ FABRICA: dict = {
     "barra": {"visible": True, "posicion": "derecha", "boton_px": 96, "permanencia_s": 1.0, "modo_fijo": False},
     "teclado": {"distribucion": "auto", "permanencia_s": 1.0, "barrido": False, "barrido_paso_s": 1.5,
                 "modo_escritura": "mensaje", "letra_pt": 28, "posicion": "abajo", "genero": "neutro",
-                "cuidador": "alguien", "solo_comunicacion": False, "aprender": True},
+                "cuidador": "alguien", "solo_comunicacion": False, "aprender": True,
+                "repetir_teclas": False},
     "voz": {"nombre": None, "volumen": 80, "velocidad": -1, "hablar_frases": True},
     "seguridad": {"soltar_sin_cara_ms": 300, "pausa_sin_cara_s": 10, "arrastre_max_s": 60},
     "arranque": {"al_encender": False, "estado": "auto"},
@@ -79,8 +80,8 @@ FABRICA: dict = {
 # Fuera de rango = valor de fábrica (y se anota en el registro).
 RANGOS = {
     "camara.indice": (0, 9), "camara.ancho": (160, 1920), "camara.alto": (120, 1080),
-    "camara.fps": (5, 60), "camara.fps_proceso": (10, 30),
-    "puntero.sens_x": (0.5, 3.0), "puntero.sens_y": (0.5, 3.0), "puntero.suavidad": (1, 5),
+    "camara.fps": (10, 60), "camara.fps_proceso": (10, 30),
+    "puntero.sens_x": (0.5, 3.0), "puntero.sens_y": (0.5, 3.3), "puntero.suavidad": (1, 5),
     "puntero.zona_muerta_px": (0.0, 15.0), "puntero.zona_muerta_centro": (0.0, 0.10),
     "puntero.aceleracion": (0, 3), "puntero.margen": (0.0, 0.25), "puntero.joystick_g": (600, 3000),
     "permanencia.tiempo_s": (0.4, 3.0), "permanencia.radio_px": (10, 80),

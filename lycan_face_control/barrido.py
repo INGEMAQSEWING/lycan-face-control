@@ -58,16 +58,36 @@ class Barrido:
 
     # ------------------------------------------------------------ armado
     def poner_filas(self, filas: list[list[str]], t: float | None = None, conservar: bool = False):
-        """Cambian las filas (otra página, otras sugerencias). Si ``conservar`` y la fila actual
-        sigue existiendo, se queda donde iba; si no, vuelve a la primera fila."""
+        """Cambian las filas (otra página, otras sugerencias, un aviso que tapa las sugerencias).
+        Con ``conservar`` se queda donde iba si se puede (ronda 3): la fila actual se busca por su
+        contenido (aunque cambie el número de filas) y, si la persona ya estaba dentro de una
+        fila, sigue dentro y en el mismo elemento. Si no se puede, vuelve a la primera fila."""
         nuevas = [list(f) for f in filas if f]
-        if conservar and self.filas and len(nuevas) == len(self.filas) and getattr(self, "nivel", FILAS) == FILAS:
-            self.filas = nuevas
+        if conservar and self.filas and nuevas and self._conservar(nuevas):
             return
         self.filas = nuevas
         pausa = getattr(self, "_pausa_hasta", None)
         self.reiniciar(self._t if t is None else t)
         self._pausa_hasta = pausa            # la pausa de 0,8 s tras elegir se respeta
+
+    def _conservar(self, nuevas: list) -> bool:
+        nivel = getattr(self, "nivel", FILAS)
+        fila = getattr(self, "fila", 0)
+        actual = self.filas[fila] if 0 <= fila < len(self.filas) else None
+        iguales = [i for i, f in enumerate(nuevas) if actual is not None and f == actual]
+        if iguales:
+            nueva_fila = min(iguales, key=lambda i: abs(i - fila))
+        elif len(nuevas) == len(self.filas):
+            nueva_fila = fila                 # la misma fila con otro contenido (sugerencias nuevas)
+        elif nivel == FILAS:
+            nueva_fila = min(fila, len(nuevas) - 1)   # la fila desapareció: la que ocupa su lugar
+        else:
+            return False
+        if nivel != FILAS and self.elemento >= len(nuevas[nueva_fila]) + 1:
+            return False
+        self.filas = nuevas
+        self.fila = nueva_fila
+        return True
 
     def reiniciar(self, t: float):
         self.nivel = FILAS

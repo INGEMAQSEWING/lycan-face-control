@@ -107,8 +107,15 @@ class MapeoCabeza:
     @classmethod
     def desde_config(cls, cfg: dict, monitor: Monitor | None = None, calibracion: dict | None = None):
         p = cfg["puntero"]
+        # Ronda 3: la zona muerta del centro solo en el modo Palanca. En Directo y Almohadilla
+        # creaba una franja plana: la cabeza seguía girando, el puntero se quedaba quieto en el
+        # centro y la permanencia lo tomaba por "quieto" (clic no pedido al pasar despacio). Se
+        # probó también una curva suave (parábola sin tramo plano): daba aún más clics al pasar
+        # despacio (17 contra 5 en 10 pasadas a 60 px/s). El temblor lo controlan el filtro, la
+        # zona muerta en px y el radio de la permanencia.
+        zm = p["zona_muerta_centro"] if p.get("modo") == "joystick" else 0.0
         return cls(monitor, calibracion, sens_x=p["sens_x"], sens_y=p["sens_y"],
-                   zona_muerta=p["zona_muerta_centro"], margen=p["margen"], joystick_g=p["joystick_g"])
+                   zona_muerta=zm, margen=p["margen"], joystick_g=p["joystick_g"])
 
     # ------------------------------------------------------------ calibración
     def poner_calibracion(self, cal: dict | None):
@@ -152,6 +159,8 @@ class MapeoCabeza:
         u = d / r_pos if d >= 0 else d / r_neg
         zm = self.zona_muerta
         a = abs(u)
+        if zm <= 0.0:
+            return u
         if a <= zm:
             return 0.0
         return math.copysign((a - zm) / (1.0 - zm), u)

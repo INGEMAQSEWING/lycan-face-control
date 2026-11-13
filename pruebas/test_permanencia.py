@@ -160,9 +160,8 @@ def test_por_objetivo_no_exige_activacion_y_repetir_exige_otra_permanencia():
         if e.disparo:
             elegidos.append((round(t, 2), e.objetivo))
     ids = [o for _, o in elegidos]
-    # "a" a 1 s y otra vez a 2 s (otra permanencia completa); luego "b" sin moverse 60 px extra
-    assert ids == ["tecla:a", "tecla:a", "tecla:b", "tecla:b"][:len(ids)]
-    assert ids[:3] == ["tecla:a", "tecla:a", "tecla:b"]
+    # "a" a 1 s y nada más (ronda 3: la repetición viene apagada); luego "b" sin moverse 60 px extra
+    assert ids == ["tecla:a", "tecla:b"]
 
 
 def test_tiempo_propio_del_objetivo():

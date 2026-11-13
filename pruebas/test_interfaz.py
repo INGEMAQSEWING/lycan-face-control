@@ -75,10 +75,14 @@ def test_letras_nunca_bajan_de_16_y_escalan():
 def test_velocidad_del_puntero_1_a_10():
     assert OP.sens_de_velocidad(3) == (1.0, 1.2)                # 3 = fábrica
     lo, hi = RANGOS["puntero.sens_x"]
+    loy, hiy = RANGOS["puntero.sens_y"]
+    anterior = (0.0, 0.0)
     for n in range(1, 11):
         sx, sy = OP.sens_de_velocidad(n)
-        assert lo <= sx <= hi and lo <= sy <= hi
+        assert lo <= sx <= hi and loy <= sy <= hiy
         assert OP.velocidad_de_sens(sx) == n
+        assert sx > anterior[0] and sy > anterior[1]          # cada nivel sube en los dos ejes
+        anterior = (sx, sy)
     assert OP.sens_de_velocidad(0) == OP.sens_de_velocidad(1)
     assert OP.sens_de_velocidad(99) == OP.sens_de_velocidad(10)
     assert OP.velocidad_de_sens("raro") == 3

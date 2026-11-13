@@ -86,8 +86,10 @@ DISTRIBUCIONES = {
     # Las letras más usadas del español primero (por defecto con barrido). Los signos van al final
     # de cada fila (no en una quinta fila) para que el teclado quepa en 1366×768 con teclas de 80 px.
     "frecuencia": [
-        _fila("␣ e a o s r n .") + [NUMEROS_TECLA],
-        _fila("i d l c t u m ,"),
+        # ⇧ y ↵ al final (ronda 3): quien solo parpadea también pone mayúscula a un nombre en medio
+        # de la frase («Llamar a Marta») y cambia de renglón
+        _fila("␣ e a o s r n .") + [NUMEROS_TECLA, ENTER],
+        _fila("i d l c t u m ,") + [MAYUS],
         _fila("p b g v y q h ¿ ?"),
         _fila("f z j ñ x k w ´ ¡ !"),
     ],
@@ -175,6 +177,7 @@ class Escritura:
     mayus: bool = False            # ⇧: la siguiente letra en mayúscula
     mayuscula_auto: bool = True
     espacio_auto: bool = False     # el último espacio lo puso una sugerencia
+    rechazado: bool = False        # la última operación no entró por el máximo de largo (aviso)
     _deshacer: list = field(default_factory=list)
 
     # ------------------------------------------------------------ consultas
@@ -253,9 +256,15 @@ class Escritura:
             return self.escribir_caracter("\n")
         return self.escribir_caracter(tecla.valor)
 
+    @property
+    def lleno(self) -> bool:
+        """El mensaje llegó al máximo (MAX_TEXTO): las letras ya no entran."""
+        return len(self.texto) >= MAX_TEXTO
+
     def escribir_caracter(self, c: str) -> Cambio:
         if not c or len(self.texto) >= MAX_TEXTO:
             self.tilde = 0
+            self.rechazado = bool(c)
             return Cambio()
         self._guardar()
         nuevo = self.texto
@@ -275,6 +284,7 @@ class Escritura:
 
     def espacio(self) -> Cambio:
         if len(self.texto) >= MAX_TEXTO:
+            self.rechazado = True
             return Cambio()
         if self.espacio_auto and self.texto.endswith(" "):
             self.espacio_auto = False       # la sugerencia ya puso el espacio: no dos seguidos
@@ -358,9 +368,14 @@ class Escritura:
             palabra = palabra[:1].upper() + palabra[1:]
         elif palabra[:1].isupper() and not _es_sigla(palabra):
             palabra = palabra[:1].lower() + palabra[1:]
+        nuevo = base + palabra + " "
+        if len(nuevo) > MAX_TEXTO:
+            # no cabe entera: no se aplica (antes quedaba cortada: «cobija» -> «c»)
+            self.rechazado = True
+            return Cambio()
         self.tilde = 0
         self.mayus = False
-        cambio = self._cambiar(base + palabra + " ")
+        cambio = self._cambiar(nuevo)
         self.espacio_auto = True
         return cambio
 
