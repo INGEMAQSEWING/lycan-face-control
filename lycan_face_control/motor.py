@@ -115,6 +115,9 @@ class Motor(threading.Thread):
         self._numero = 0
         self._t_ult_proceso = None
         self._t_ult_paso = None
+        # latido (time.monotonic) al empezar cada vuelta: el vigilante de la interfaz distingue un
+        # motor lento (un cuadro que tardó, memoria paginada) de uno trabado o muerto
+        self.latido = time.monotonic()
         self._t_reintento = None
         self._t_registro = None
         self.fatal = False
@@ -281,6 +284,7 @@ class Motor(threading.Thread):
     # ------------------------------------------------------------- bucle
     def vuelta(self):
         """Una vuelta: órdenes, último cuadro, detector y un paso de la máquina."""
+        self.latido = time.monotonic()
         self._atender_ordenes()
         ahora = self.reloj()
         self._vigilar_camara(ahora)

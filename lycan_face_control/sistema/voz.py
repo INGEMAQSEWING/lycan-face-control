@@ -9,6 +9,10 @@
 - **Respaldo**: si no se puede crear el objeto COM, un proceso ``powershell.exe`` sin ventana que
   carga System.Speech y lee frases por la entrada estándar (una por línea, en UTF-8).
 - Si nada funciona, ``hablar`` devuelve False y la interfaz muestra el texto en grande.
+- Si la voz falla **después** de arrancar (Speak devuelve error, el proceso de PowerShell se
+  cerró), se intenta recrear una vez; si tampoco, la voz queda apagada (el siguiente ``hablar``
+  devuelve False) y la frase que no se oyó va a ``fallidos`` para que la interfaz la muestre en
+  grande (ronda 2 de arreglos).
 - ``voz_espanol`` dice si la voz elegida es en español. Si Windows solo tiene voces en otro
   idioma, se usa la que haya (se entiende algo) y la interfaz avisa una vez y muestra el texto en
   grande.
@@ -288,6 +292,7 @@ class Voz:
         self.nombre_voz: str | None = None
         self.voz_espanol: bool | None = None   # None = todavía no se sabe
         self.ultimo = ""
+        self.fallidos: queue.Queue = queue.Queue()   # frases que no se pudieron decir (para la interfaz)
         self._hilo = None
         if arrancar:
             self._hilo = threading.Thread(target=self._correr, name="voz", daemon=True)
@@ -359,6 +364,45 @@ class Voz:
             self.motor = None
             return None
 
+    def _recrear(self, m):
+        """La voz falló: se cierra y se crea otra vez la misma clase de motor (una vez)."""
+        try:
+            if m is not None:
+                m.cerrar()
+        except Exception:  # noqa: BLE001
+            pass
+        crear = self._crear_sapi if self.motor == "sapi" else self._crear_respaldo
+        try:
+            return crear() if self.motor == "sapi" else crear(self.nombre_voz)
+        except Exception as e:  # noqa: BLE001
+            log.warning("No se pudo recrear la voz: %s", type(e).__name__)
+            return None
+
+    def _decir_seguro(self, m, texto: str, urgente: bool):
+        """Dice el texto; si falla, recrea la voz y lo intenta otra vez. Devuelve el motor que
+        queda (None = sin voz: la frase va a ``fallidos``)."""
+        try:
+            self._decir(m, texto, urgente)
+            return m
+        except Exception as e:  # noqa: BLE001
+            log.warning("La voz falló: %s", type(e).__name__)
+        m = self._recrear(m)
+        if m is not None:
+            try:
+                self._decir(m, texto, urgente)
+                log.info("La voz se recuperó")
+                return m
+            except Exception as e:  # noqa: BLE001
+                log.warning("La voz volvió a fallar: %s", type(e).__name__)
+                try:
+                    m.cerrar()
+                except Exception:  # noqa: BLE001
+                    pass
+        self.motor = None                    # el próximo hablar() devuelve False
+        if texto:
+            self.fallidos.put(texto)
+        return None
+
     def _decir(self, m, texto: str, urgente: bool):
         if self.motor == "sapi":
             m.volumen(self._volumen(urgente))
@@ -396,21 +440,23 @@ class Voz:
                             pass
                     continue
                 if orden[0] == "hablar":
-                    # si llegaron varias, solo vale la última (una frase nueva corta la anterior)
+                    # si llegaron varias, solo vale la última (una frase nueva corta la anterior);
+                    # las demás órdenes (cambio de voz, cerrar) se vuelven a poner en la cola
+                    otras = []
                     try:
                         while True:
                             sig = self.cola.get_nowait()
-                            if sig[0] == "cerrar":
-                                self.cola.put(sig)
-                                break
                             if sig[0] == "hablar":
                                 orden = sig
+                            else:
+                                otras.append(sig)
+                                if sig[0] == "cerrar":
+                                    break
                     except queue.Empty:
                         pass
-                    try:
-                        self._decir(m, orden[1], orden[2])
-                    except Exception as e:  # noqa: BLE001
-                        log.warning("La voz falló: %s", type(e).__name__)
+                    for o in otras:
+                        self.cola.put(o)
+                    m = self._decir_seguro(m, orden[1], orden[2])
         finally:
             if m is not None:
                 try:

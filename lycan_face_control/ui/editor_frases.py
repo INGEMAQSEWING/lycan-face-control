@@ -201,7 +201,7 @@ class EditorFrases:
         self.botones["olvidar"].poner_color(None)
         p = getattr(self.app, "obtener_prediccion", lambda: None)()
         ok = p.olvidar() if p is not None else True
-        self._aviso("ed_olvidadas" if ok else "ed_no_guardo")
+        self._aviso("ed_olvidadas" if ok else "ed_no_olvido")
 
     def guardar(self):
         ok = self.frases.guardar()

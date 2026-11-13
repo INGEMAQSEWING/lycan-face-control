@@ -115,7 +115,7 @@ def leer_con_reintentos(ruta: Path) -> str:
     ultimo = None
     for i in range(REINTENTOS_LECTURA):
         try:
-            return ruta.read_text(encoding="utf-8")
+            return ruta.read_text(encoding="utf-8-sig")   # con o sin BOM
         except FileNotFoundError:
             raise
         except OSError as e:
@@ -336,6 +336,19 @@ class Prediccion:
             except OSError as e:
                 log.warning("No se pudo borrar el archivo de palabras aprendidas: %s", e)
                 return False
+            # también las copias apartadas cuando el archivo se dañó y el temporal que haya
+            # quedado: tienen las mismas palabras de la persona ("olvidar" es olvidar todo)
+            ok = True
+            otros = list(self.ruta.parent.glob(f"{self.ruta.stem}.dañado-*.json"))
+            otros.append(self.ruta.with_name(self.ruta.name + ".tmp"))
+            for f in otros:
+                try:
+                    if f.exists():
+                        f.unlink()
+                except OSError as e:
+                    log.warning("No se pudo borrar %s: %s", f.name, e)
+                    ok = False
+            return ok
         return True
 
     # ------------------------------------------------------------ archivo

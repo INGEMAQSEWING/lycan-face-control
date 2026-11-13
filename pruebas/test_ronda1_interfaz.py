@@ -14,18 +14,26 @@ def test_tres_tropiezos_separados_no_rinden_el_motor(app_viva, monkeypatch):  # 
     _girar(app, 300)
     reloj = [time.monotonic()]
     for _ in range(4):
-        # un tropiezo aislado cada 10 minutos
-        app._t_ult_vista = reloj[0] - 5
+        # un tropiezo aislado (motor trabado) cada 10 minutos
+        app._t_ult_vista = reloj[0] - 20
+        app.motor.latido = reloj[0] - 20
         app._vigilar_motor(reloj[0])
+        if app._motor_viejo is not None:
+            app._vigilar_motor(reloj[0] + 30)
         assert not app.motor_rendido
         _girar(app, 300)
         reloj[0] += A.REINICIOS_VENTANA_S * 2
     assert app.reinicios == 4
-    # tres seguidos en 5 minutos sí: ahí se rinde
+    # tres seguidos en 5 minutos sí: ahí se rinde (y vuelve a intentar al minuto)
     for _ in range(4):
-        app._t_ult_vista = reloj[0] - 5
+        app._t_ult_vista = reloj[0] - 20
+        app.motor.latido = reloj[0] - 20
         app._vigilar_motor(reloj[0])
-        reloj[0] += 1
+        if app.motor_rendido:
+            break
+        if app._motor_viejo is not None:
+            app._vigilar_motor(reloj[0] + 11)
+        reloj[0] += 12
     assert app.motor_rendido
 
 

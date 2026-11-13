@@ -229,7 +229,7 @@ def validar(datos, fabrica: dict | None = None, ruta: str = "", problemas: list 
             out[clave] = _validar_perfiles(v, problemas)
         elif r == "pantalla.monitor":
             # 'principal', 'todo' o el número de monitor (como texto o como número)
-            if isinstance(v, str) and (v in ("principal", "todo") or (v.isdigit() and int(v) < 16)):
+            if isinstance(v, str) and (v in ("principal", "todo") or (v.isascii() and v.isdigit() and int(v) < 16)):
                 out[clave] = v
             elif _es_num(v) and _finito(v) and float(v).is_integer() and 0 <= v < 16:
                 out[clave] = str(int(v))
@@ -356,7 +356,7 @@ class Configuracion:
         ultimo = None
         for intento in range(REINTENTOS_LECTURA):
             try:
-                return self.ruta.read_text(encoding="utf-8")
+                return self.ruta.read_text(encoding="utf-8-sig")   # acepta el BOM del Bloc de notas o PowerShell
             except UnicodeDecodeError:
                 raise
             except OSError as e:

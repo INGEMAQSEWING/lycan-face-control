@@ -40,9 +40,12 @@ log = logging.getLogger("lycan")
 
 REFRESCO_MS = 33
 PUBLICAR_CADA_S = 0.25
-MOTOR_CAIDO_S = 2.0
+MOTOR_CAIDO_S = 2.0             # sin vistas este tiempo: se suelta todo (por si acaso) y se mira el latido
+MOTOR_COLGADO_S = 12.0          # hilo vivo pero sin latido este tiempo: trabado, se reinicia
 MAX_REINICIOS = 3
-REINICIOS_VENTANA_S = 300.0     # se rinde con 3 reinicios en 5 minutos (no en toda la sesión)
+REINICIOS_VENTANA_S = 300.0     # se rinde con 3 reinicios en 5 minutos (no en toda la sesión)...
+REINTENTO_RENDIDO_S = 60.0      # ...pero nunca para siempre: vuelve a intentar cada minuto
+ESPERA_MOTOR_VIEJO_S = 10.0     # antes de crear otro motor, el viejo suelta la cámara y FaceMesh
 GUARDAR_PALABRAS_S = 300.0      # las palabras aprendidas se guardan cada 5 minutos si cambiaron
 AVISOS_POR_VUELTA = 60
 # avisos que no se muestran (o que ya se ven en el estado grande)
@@ -80,6 +83,9 @@ class App:
         self._t_ult_vuelta = None              # última vuelta de la interfaz (para notar suspensión)
         self._t_guardar_palabras = time.monotonic()
         self.motor_rendido = False
+        self._t_rendido = None
+        self._motor_viejo = None               # (motor, desde) que se está esperando que termine
+        self._soltado_lento = False
         self.ultima_externa = None
         self._t_ult_vista = time.monotonic()
         self._t_publicar = 0.0
@@ -439,6 +445,20 @@ class App:
             else:
                 self.mostrar_aviso(texto, 10)
 
+    def _revisar_voz(self):
+        """Frases que la voz no pudo decir (falló después de arrancar): se muestran en grande."""
+        cola = getattr(self.voz, "fallidos", None)
+        if cola is None:
+            return
+        while True:
+            try:
+                texto = cola.get_nowait()
+            except queue.Empty:
+                break
+            except Exception:  # noqa: BLE001
+                break
+            self.mostrar_aviso(texto, 10)
+
     def _crear_voz(self):
         try:
             from ..sistema import voz as modulo
@@ -483,7 +503,11 @@ class App:
 
     def _atender_atajo(self, nombre: str):
         if nombre == "pausar":
-            pass                        # ya se atendió en el hilo de atajos (suelta todo al instante)
+            # ya se atendió en el hilo de atajos (suelta todo al instante); si la detección se
+            # había rendido, el atajo del cuidador la vuelve a intentar ya
+            if self.motor_rendido and self._motor_viejo is None:
+                log.info("El cuidador pidió reintentar la detección con el atajo")
+                self._reintentar_motor(time.monotonic())
         elif nombre == "teclado":
             self.alternar_teclado()
         elif nombre == "recentrar":
@@ -585,6 +609,7 @@ class App:
             except queue.Empty:
                 break
             self.atender(a)
+        self._revisar_voz()
         self._pintar(v)
         ahora = time.monotonic()
         if ahora - self._t_publicar >= PUBLICAR_CADA_S:
@@ -663,7 +688,7 @@ class App:
             self.mostrar_aviso(t("aviso_fatal"), 8)
             return            # el vigilante reinicia el motor
         if clave == "error_inicio":
-            self.motor_rendido = True
+            self._rendirse(time.monotonic())
         if clave in AVISOS_CALLADOS:
             return
         texto = texto_aviso(a)
@@ -695,25 +720,55 @@ class App:
             self.mostrar_aviso(t("aviso_descanso"), 15)
 
     def _vigilar_motor(self, ahora: float):
-        """Sección 8.5: motor caído o sin vistas 2 s -> soltar todo, avisar y reiniciar (3 veces)."""
+        """Sección 8.5 (ronda 2 de arreglos). Distingue un motor **lento** (vivo y con latido: un
+        cuadro que tardó, memoria paginada en un equipo con poca RAM) de uno **muerto o trabado**.
+        - Sin vistas 2 s: se suelta todo una vez (por seguridad) y se espera; si se recupera solo,
+          no cuenta como reinicio ni deja en pausa.
+        - Muerto, o vivo sin latido 12 s: se reinicia (queda en pausa). Antes de crear el motor
+          nuevo se espera a que el viejo termine (no dos cámaras ni dos FaceMesh a la vez).
+        - 3 reinicios en 5 minutos: se rinde, pero vuelve a intentar cada minuto y el atajo de
+          pausa del cuidador lo intenta ya."""
+        if self.cerrando:
+            return
+        if self._motor_viejo is not None:
+            viejo, desde = self._motor_viejo
+            if viejo.is_alive() and ahora - desde < ESPERA_MOTOR_VIEJO_S:
+                return
+            if viejo.is_alive():
+                log.warning("El motor anterior no terminó en %.0f s; se crea otro igual", ESPERA_MOTOR_VIEJO_S)
+            self._motor_viejo = None
+            self._arrancar_motor_nuevo(ahora)
+            return
         m = self.motor
-        if self.motor_rendido or self.cerrando:
+        if self.motor_rendido:
+            if self._t_rendido is None or ahora - self._t_rendido >= REINTENTO_RENDIDO_S:
+                self._reintentar_motor(ahora)
             return
         if not m.listo.is_set():
             self._t_ult_vista = ahora           # todavía cargando la detección
             return
         if getattr(m, "error_inicio", None):
-            self.motor_rendido = True
+            self._rendirse(ahora)
             self.mostrar_aviso(t("aviso_error_inicio"), 15)
             return
-        caido = not m.is_alive() or ahora - self._t_ult_vista > MOTOR_CAIDO_S
-        if not caido:
+        muerto = not m.is_alive()
+        if not muerto and ahora - self._t_ult_vista <= MOTOR_CAIDO_S:
+            self._soltado_lento = False
             return
+        if not muerto:
+            latido = getattr(m, "latido", None)
+            if latido is not None and ahora - latido <= MOTOR_COLGADO_S:
+                if not self._soltado_lento:
+                    self._soltado_lento = True
+                    self._soltar_seguro("motor lento")
+                    log.warning("La detección va lenta (%.1f s sin vistas); se espera sin reiniciar",
+                                ahora - self._t_ult_vista)
+                return
         self._soltar_seguro("motor caído")
         self._t_reinicios = [x for x in self._t_reinicios if ahora - x < REINICIOS_VENTANA_S]
         if len(self._t_reinicios) >= MAX_REINICIOS:
-            self.motor_rendido = True
-            log.error("El motor no se pudo reiniciar")
+            log.error("El motor no se pudo reiniciar; se vuelve a intentar en %.0f s", REINTENTO_RENDIDO_S)
+            self._rendirse(ahora)
             self.mostrar_aviso(t("aviso_motor_rendido"), 30)
             return
         self.reinicios += 1
@@ -721,15 +776,41 @@ class App:
         log.warning("El motor no responde: reinicio %d (%d en los últimos 5 minutos, máximo %d)",
                     self.reinicios, len(self._t_reinicios), MAX_REINICIOS)
         self.mostrar_aviso(t("aviso_motor_caido"), 8)
+        self._reemplazar_motor(ahora)
+
+    def _rendirse(self, ahora: float):
+        self.motor_rendido = True
+        self._t_rendido = ahora
+
+    def _reintentar_motor(self, ahora: float):
+        self.motor_rendido = False
+        self._t_rendido = None
+        self._t_reinicios = []
+        self.mostrar_aviso(t("aviso_motor_reintento"), 8)
+        self._reemplazar_motor(ahora)
+
+    def _reemplazar_motor(self, ahora: float):
+        m = self.motor
         try:
             m.detener()
             m.join(timeout=1.0)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            vivo = m.is_alive()
+        except Exception:  # noqa: BLE001
+            vivo = False
+        if vivo:
+            self._motor_viejo = (m, ahora)      # se crea el nuevo cuando el viejo termine
+            return
+        self._arrancar_motor_nuevo(ahora)
+
+    def _arrancar_motor_nuevo(self, ahora: float):
         self.motor = self._crear_motor()
         self.motor.start()
         self.motor.orden("pausar", "reinicio")
         self._t_ult_vista = ahora
+        self._soltado_lento = False
         self.registro.publicar(forzar=True)
 
     def _error_en_callback(self, tipo, valor, traza):

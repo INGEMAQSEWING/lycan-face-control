@@ -624,10 +624,13 @@ def test_motor_caido_se_reinicia_y_suelta_todo(app_viva, monkeypatch):
     assert app.ventana.lbl_aviso.cget("text") == T.t("aviso_motor_caido")
     _girar(app, 600)
     assert app.motor.maquina.estado == K.PAUSA          # tras reiniciar queda en pausa
-    # sin vistas nuevas más de 2 s también cuenta; al tercer reinicio se rinde
+    # trabado (sin vistas y sin latido) también cuenta; al tercer reinicio se rinde
     for _ in range(3):
-        app._t_ult_vista = time.monotonic() - 5
+        app._t_ult_vista = time.monotonic() - 20
+        app.motor.latido = time.monotonic() - 20
         app._vigilar_motor(time.monotonic())
+        if app._motor_viejo is not None:              # el viejo terminó (o se dejó de esperar)
+            app._vigilar_motor(time.monotonic() + 30)
     assert app.motor_rendido and app.reinicios == 3
     _girar(app, 100)
     assert app.ventana.lbl_estado.cget("text") == T.texto_estado("DETENIDO")
