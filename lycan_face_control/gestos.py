@@ -21,7 +21,24 @@ Reglas:
   entre ``parpadeo_largo`` y ``descanso`` (más largo = descanso, se ignora). La duración se mide
   de forma conservadora (del primer al último cuadro con los ojos cerrados), así un parpadeo
   natural nunca "se estira" por tener pocos cuadros por segundo.
-- Sin cara: todo vuelve a reposo sin eventos.
+- Sin cara: los tramos en curso se cortan sin eventos, pero **no** se olvida lo que hace falta
+  para no repetir: un gesto que estaba fuera de reposo sigue "esperando reposo" cuando vuelve la
+  cara, y un tramo que ya empieza arriba al volver la cara tampoco cuenta (ronda 1 de arreglos).
+- Parpadeo y cara perdida: un hueco corto (< 300 ms) durante un cierre no lo corta; uno más
+  largo deja el cierre **inválido** (al abrir no sale nada), y un cierre que ya viene en curso
+  al volver la cara tampoco cuenta. Así un descanso con los ojos cerrados nunca se vuelve
+  parpadeo largo porque FaceMesh perdió la cara un instante.
+- Parpadeo voluntario **profundo**: la mayor parte del cierre tiene que estar muy por debajo
+  del umbral de cierre (``profundo``); unos ojos entrecerrados por sueño o al mirar hacia abajo
+  no cuentan. El cierre termina en cuanto los ojos pasan otra vez del umbral de cierre dos
+  cuadros seguidos (u 80 ms): una ráfaga de parpadeos naturales no se junta en uno largo.
+- Inhibición cruzada: un cierre de ojos con la boca abierta, las cejas arriba o sonriendo
+  (bostezo, risa) no es parpadeo largo; y una boca abierta con los ojos cerrados (bostezo) no
+  da ningún gesto de boca.
+- Tope del gesto largo: un tramo de más de ``largo + 3 s`` es un bostezo o un descanso y no da
+  ``GestoLargo``.
+- ``ResultadoGestos.soltados`` trae un ``GestoSoltado(nombre, duracion_ms)`` por cada tramo válido
+  que terminó en ese cuadro (la pausa lo usa para reanudar al soltar).
 """
 from __future__ import annotations
 
@@ -41,6 +58,13 @@ SONRISA_BOCA_MAX = 0.15                       # y MAR < base + 0,15 (boca abiert
 FRACCION_SALIDA_CALIBRADA = 0.6               # salida = 60 % del umbral de entrada calibrado
 
 TOLERANCIA_ABIERTO_S = 0.08                   # un instante abierto más corto no corta el cierre
+CUADROS_ABIERTO_CORTAN = 2                    # ...pero dos cuadros seguidos abiertos sí lo cortan
+PROFUNDO_BAJO_CERRADO = 0.13                  # cierre profundo: por debajo de cerrado − 0,13
+PROFUNDO_MIN = 0.30
+FRACCION_PROFUNDA = 0.6                       # al menos el 60 % de los cuadros del cierre, profundos
+PERDIDA_CORTA_S = 0.3                         # hueco sin cara que no corta un cierre de ojos
+BOSTEZO_OJOS_S = 0.3                          # boca abierta con los ojos cerrados este tiempo = bostezo
+LARGO_EXTRA_S = 3.0                           # un gesto largo de más de largo + 3 s no cuenta
 DOBLE_PARPADEO_S = 2.5
 NOMBRES = ("boca", "cejas", "sonrisa")
 
@@ -54,6 +78,13 @@ class GestoCorto:
 @dataclass(frozen=True)
 class GestoLargo:
     nombre: str
+
+
+@dataclass(frozen=True)
+class GestoSoltado:
+    """Un tramo válido (no consumido, no bostezo) terminó: cuánto duró."""
+    nombre: str
+    duracion_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -82,6 +113,7 @@ class ResultadoGestos:
     ojos_cerrados: bool = False                         # cierre de ambos en curso
     parpadeo_progreso: float = 0.0                      # 0..1 hacia el parpadeo largo
     parpadeo_listo: bool = False
+    soltados: list = field(default_factory=list)        # GestoSoltado de este cuadro
 
     @property
     def gesto_activo(self) -> bool:
@@ -115,6 +147,20 @@ class _Gesto:
         self.emitido = False              # el tramo actual ya dio su evento
         self.consumido = False            # el tramo actual no debe dar eventos
         self.necesita_reposo = False      # tras un evento: volver a reposo antes de repetir
+        self.ojos_cerrados_s = 0.0        # tiempo del tramo con los dos ojos cerrados (bostezo)
+
+    def perder_cara(self):
+        """Sin cara: se corta el tramo sin eventos, pero si el gesto estaba fuera de reposo tiene
+        que volver a reposo (con la cara presente) antes de contar otra vez."""
+        afuera = self.fuera_de_reposo or self.t_tramo is not None or self.necesita_reposo
+        self.t_tramo = None
+        self.t_ult = None
+        self.emitido = False
+        self.consumido = False
+        self.ojos_cerrados_s = 0.0
+        if afuera:
+            self.fuera_de_reposo = True
+            self.necesita_reposo = True
 
     def duracion(self, t: float) -> float:
         if self.t_tramo is None:
@@ -158,9 +204,14 @@ class Gestos:
         self.descanso_s = max(float(p.get("descanso_ms", 4000)) / 1000.0, self.parpadeo_largo_s + 1.0)
         self.cerrado = float(p.get("cerrado", 0.55))
         self.abierto = max(float(p.get("abierto", 0.70)), self.cerrado + 0.05)
+        self.profundo = min(self.cerrado, max(self.cerrado - PROFUNDO_BAJO_CERRADO, PROFUNDO_MIN))
         self.doble = bool(p.get("doble", False))
         self._t_refr = -1e9
         self._refr_por = None
+        self._t_ult_cara = None        # último cuadro con cara
+        self._recien_vuelta = False    # el cuadro actual es el primero tras perder la cara
+        self._t_prev = None
+        self._soltados: list = []
         self._reiniciar_parpadeo()
         self._t_ultimo_largo = None
 
@@ -222,17 +273,37 @@ class Gestos:
         return t < self._t_refr
 
     # ------------------------------------------------------------ paso
+    def perder_cara(self, t: float | None = None):
+        """Sin cara (o una cara que no es la misma): ver la docstring del módulo."""
+        for g in self._g.values():
+            g.perder_cara()
+        self._recien_vuelta = True
+        self._t_prev = None
+
     def actualizar(self, m, t: float) -> ResultadoGestos:
         res = ResultadoGestos()
         if m is None:
-            self.reiniciar()
+            self.perder_cara(t)
             return res
+        dt = 0.0 if self._t_prev is None else min(max(t - self._t_prev, 0.0), 0.2)
+        self._t_prev = t
+        hueco = None
+        if self._recien_vuelta:
+            hueco = float("inf") if self._t_ult_cara is None else t - self._t_ult_cara
+        self._t_ult_cara = t
+        ojos_ambos = self._ambos_cerrados(m)
+        self._soltados = []
         eventos: list = []
         activos = set()
         for nombre, g in self._g.items():
             if not g.encendido:
                 continue
             s = self._senal(nombre, m)
+            if nombre == "boca" and g.t_tramo is not None and ojos_ambos:
+                g.ojos_cerrados_s += dt
+                if g.ojos_cerrados_s >= BOSTEZO_OJOS_S - 1e-9 and not g.consumido:
+                    g.consumido = True            # bostezo: la boca no hace nada
+                    g.necesita_reposo = True
             self._paso_gesto(g, s, t, eventos)
             if g.fuera_de_reposo:
                 activos.add(nombre)
@@ -242,8 +313,10 @@ class Gestos:
             ref = self.base["mar"] if nombre == "boca" else 1.0
             res.nivel[nombre] = ((s - ref) / (g.entrar - ref)) if _finito(s) and g.entrar > ref else 0.0
         if self.parpadeo_activo:
-            self._paso_parpadeo(m, t, eventos, res)
+            self._paso_parpadeo(m, t, eventos, res, hueco)
+        self._recien_vuelta = False
         res.eventos = eventos
+        res.soltados = self._soltados
         res.activos = frozenset(activos)
         return res
 
@@ -270,6 +343,10 @@ class Gestos:
             if g.t_tramo is None:
                 g.t_tramo = t
                 g.emitido = False
+                g.ojos_cerrados_s = 0.0
+                if self._recien_vuelta:
+                    g.necesita_reposo = True      # ya venía arriba al volver la cara: no se sabe desde cuándo
+                    g.fuera_de_reposo = True
                 # un tramo que empieza en el refractario o sin haber vuelto a reposo no cuenta
                 g.consumido = g.necesita_reposo or self.en_refractario(t)
             g.t_ult = t
@@ -283,10 +360,13 @@ class Gestos:
         # terminó el tramo (la señal bajó del umbral de entrada)
         if g.t_tramo is not None:
             d = g.duracion(t)
+            if not g.consumido:
+                self._soltados.append(GestoSoltado(g.nombre, int(round(d * 1000))))
             if not g.emitido and not g.consumido and not self.en_refractario(t):
                 ev = None
                 if g.tiene_largo and d >= self.largo_s - 1e-9:
-                    ev = GestoLargo(g.nombre)
+                    if d <= self.largo_s + LARGO_EXTRA_S + 1e-9:
+                        ev = GestoLargo(g.nombre)   # más largo: bostezo o descanso, no cuenta
                 elif d >= g.sostener_s - 1e-9:
                     ev = GestoCorto(g.nombre)
                 if ev is not None:
@@ -296,6 +376,7 @@ class Gestos:
             g.t_ult = None
             g.emitido = False
             g.consumido = False
+            g.ojos_cerrados_s = 0.0
 
     # ------------------------------------------------------------ parpadeo
     def _reiniciar_parpadeo(self):
@@ -303,7 +384,33 @@ class Gestos:
         self._t_cierre = None          # primer cuadro con ambos ojos cerrados
         self._t_ult_cerrado = None     # último cuadro con ambos ojos cerrados
         self._t_abierto = None         # cuándo se abrieron (pendiente de confirmar 80 ms)
+        self._n_abiertos = 0           # cuadros abiertos seguidos dentro del cierre
+        self._n_cerr = 0               # cuadros del cierre con los dos ojos cerrados
+        self._n_prof = 0               # ...de ellos, con cierre profundo
+        self._invalido = False         # el cierre no puede dar parpadeo largo
         self._listo = False
+
+    def _ambos_cerrados(self, m) -> bool:
+        rd, ri = self._proporciones(m)
+        return _finito(rd) and _finito(ri) and rd < self.cerrado and ri < self.cerrado
+
+    def _otro_gesto_fuera(self, m) -> bool:
+        """Boca abierta, cejas arriba o sonrisa (encendidos o no): cambian la forma del ojo."""
+        for nombre, g in self._g.items():
+            s = self._senal(nombre, m)
+            if not _finito(s):
+                continue
+            if nombre == "boca":
+                if s > g.salir:
+                    return True
+            elif s > g.entrar:
+                return True
+        return False
+
+    def _cierre_valido(self) -> bool:
+        if self._invalido or self._n_cerr <= 0:
+            return False
+        return self._n_prof >= FRACCION_PROFUNDA * self._n_cerr - 1e-9
 
     def _proporciones(self, m):
         bd, bi = self.base["ear_der"], self.base["ear_izq"]
@@ -311,42 +418,65 @@ class Gestos:
         ri = m.ear_izq / bi if bi > 0 else float("nan")
         return rd, ri
 
-    def _paso_parpadeo(self, m, t: float, eventos: list, res: ResultadoGestos):
+    def _paso_parpadeo(self, m, t: float, eventos: list, res: ResultadoGestos, hueco: float | None = None):
         rd, ri = self._proporciones(m)
         if not (_finito(rd) and _finito(ri)):
             return
         ambos = rd < self.cerrado and ri < self.cerrado
-        alguno_abierto = rd > self.abierto or ri > self.abierto
-        res.ojos_cerrando = rd < self.abierto or ri < self.abierto
+        # "empezando a cerrar": los DOS ojos bajo el umbral de abierto (un párpado caído solo no)
+        res.ojos_cerrando = rd < self.abierto and ri < self.abierto
+        if hueco is not None and hueco > PERDIDA_CORTA_S + 1e-9:
+            # primer cuadro tras perder la cara un buen rato: no se sabe qué pasó en el hueco
+            if self._t_cierre is not None:
+                self._invalido = True
+            elif ambos:
+                self._t_cierre = t              # un cierre que ya venía: no cuenta
+                self._t_ult_cerrado = t
+                self._cerrados = True
+                self._invalido = True
         if not self._cerrados:
             if ambos:
                 if self._t_cierre is not None and self._t_abierto is not None \
-                        and t - self._t_abierto < TOLERANCIA_ABIERTO_S:
+                        and t - self._t_abierto < TOLERANCIA_ABIERTO_S \
+                        and self._n_abiertos < CUADROS_ABIERTO_CORTAN:
                     pass                    # se abrió solo un instante: sigue el mismo cierre
                 else:
+                    if self._t_cierre is not None:
+                        self._terminar_cierre(t, eventos)
+                    self._reiniciar_parpadeo()
                     self._t_cierre = t
-                    self._listo = False
                 self._cerrados = True
                 self._t_abierto = None
+                self._n_abiertos = 0
                 self._t_ult_cerrado = t
-            elif self._t_cierre is not None and self._t_abierto is not None \
-                    and t - self._t_abierto >= TOLERANCIA_ABIERTO_S - 1e-9:
-                self._terminar_cierre(t, eventos)
+            elif self._t_cierre is not None and self._t_abierto is not None:
+                self._n_abiertos += 1
+                if t - self._t_abierto >= TOLERANCIA_ABIERTO_S - 1e-9 \
+                        or self._n_abiertos >= CUADROS_ABIERTO_CORTAN:
+                    self._terminar_cierre(t, eventos)
         else:
-            if alguno_abierto:
+            if not ambos:
                 self._cerrados = False
                 self._t_abierto = t
-            elif ambos:
+                self._n_abiertos = 1
+            else:
                 self._t_ult_cerrado = t
+        if self._cerrados and ambos:
+            self._n_cerr += 1
+            if rd < self.profundo and ri < self.profundo:
+                self._n_prof += 1
+            if self._otro_gesto_fuera(m):
+                self._invalido = True           # bostezo, risa, cejas: no es un parpadeo voluntario
         if self._t_cierre is not None:
             dur = self._t_ult_cerrado - self._t_cierre
+            valido = self._cierre_valido()
             res.ojos_cerrados = True
-            res.parpadeo_progreso = min(dur / self.parpadeo_largo_s, 1.0)
+            res.parpadeo_progreso = min(dur / self.parpadeo_largo_s, 1.0) if valido else 0.0
             if dur >= self.parpadeo_largo_s - 1e-9 and dur <= self.descanso_s and not self._listo \
-                    and not self._refractario_para_parpadeo(self._t_cierre):
+                    and valido and not self._refractario_para_parpadeo(self._t_cierre):
                 self._listo = True
                 eventos.append(ParpadeoListo())
-            res.parpadeo_listo = self._listo and dur <= self.descanso_s
+            res.parpadeo_listo = self._listo and dur <= self.descanso_s and valido
 
     def _refractario_para_parpadeo(self, t_cierre: float) -> bool:
         """El refractario de boca, cejas o sonrisa anula un parpadeo largo que empezó dentro de él;
@@ -356,9 +486,12 @@ class Gestos:
     def _terminar_cierre(self, t: float, eventos: list):
         dur = self._t_ult_cerrado - self._t_cierre
         t_cierre = self._t_cierre
+        valido = self._cierre_valido()
         self._reiniciar_parpadeo()
         if dur < self.parpadeo_largo_s - 1e-9:
             return                          # parpadeo natural: NUNCA hace nada
+        if not valido:
+            return                          # poco profundo, cara perdida, bostezo...
         if dur > self.descanso_s:
             return                          # descanso con los ojos cerrados: se ignora
         if self._refractario_para_parpadeo(t_cierre):

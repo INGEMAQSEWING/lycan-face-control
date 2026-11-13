@@ -33,6 +33,10 @@ TXT: dict[str, str] = {
     "sub_ACTIVO": "Mueva la cabeza para llevar el puntero. Quédese quieto un momento para hacer clic.",
     "sub_PAUSA": "No muevo el puntero ni hago clic. Para seguir, elija «Reanudar» con la cabeza.",
     "sub_PAUSA_auto": "Pausa porque no veía su cara. Sigo solo cuando vuelva a verla un momento.",
+    "sub_PAUSA_parpadeo": "En pausa. Para seguir, cierre los ojos dos veces seguidas, cada vez un momento largo.",
+    "sub_camara_NO_ABRE": "No encuentro la cámara. Revise que esté conectada.",
+    "sub_camara_OCUPADA": "Otro programa está usando la cámara. Ciérrelo para que yo pueda verla.",
+    "sub_camara_PERDIDA": "Perdí la cámara. Revise que esté conectada; sigo intentando.",
     "sub_SIN_CARA": "Acérquese a la cámara o revise la luz. Ya solté todos los botones.",
     "sub_CALIBRANDO": "Siga las instrucciones de la ventana de calibración.",
     "sub_DETENIDO": "La detección se detuvo. Cierre y vuelva a abrir el programa.",
@@ -71,7 +75,7 @@ TXT: dict[str, str] = {
     "pregunta_salir": "¿Seguro que quiere salir? El programa dejará de responder a su cabeza.",
     "globo_pausa": "Pausar o reanudar. El cuidador también puede usar Ctrl+Alt+Espacio.",
     "globo_recentrar": "Si cambió de posición en la cama o la silla, mire al frente y elija Recentrar.",
-    "globo_calibrar": "Repite la calibración guiada (más o menos un minuto).",
+    "globo_calibrar": "Repite la calibración guiada (unos dos minutos).",
     "globo_mini": "Deja solo una tira pequeña con el estado y el botón Reanudar.",
     "globo_salir": "Cierro el programa. Antes suelto todos los botones del ratón.",
     "titulo_gestos": "Gestos",
@@ -119,6 +123,7 @@ TXT: dict[str, str] = {
     "aviso_activo": "Activo.",
     "aviso_sin_cara": "No veo su cara. Acérquese a la cámara o revise la luz.",
     "aviso_cara_vuelve": "Ya veo su cara otra vez.",
+    "aviso_cara_distinta": "Parece que hay otra cara frente a la cámara. Solté todo; espero un momento antes de seguir.",
     "aviso_recomendar_calibrar": "Le recomiendo calibrar para que el puntero se ajuste a su forma de moverse.",
     "aviso_recentrando": "Mire al frente y quédese quieto un momento…",
     "aviso_recentrado": "Listo: el centro quedó donde usted está mirando ahora.",
@@ -156,7 +161,7 @@ TXT: dict[str, str] = {
     # ---- calibración ----
     "cal_titulo": "Calibración guiada",
     "cal_intro_titulo": "Vamos a ajustar el programa a su forma de moverse",
-    "cal_intro": ("Toma más o menos un minuto. Cada paso avanza solo; usted solo tiene que seguir las "
+    "cal_intro": ("Toma unos dos minutos. Cada paso avanza solo; usted solo tiene que seguir las "
                   "instrucciones. Si algo no salió bien, el cuidador puede elegir «Repetir este paso»."),
     "cal_empezar": "Empezar",
     "cal_preparese": "Prepárese…",
@@ -220,12 +225,12 @@ TXT: dict[str, str] = {
                "• Puede pausar o reanudar en cualquier momento con Ctrl+Alt+Espacio."),
     "asis_3_titulo": "Cómo se hace clic",
     "asis_3": ("• Quedarse quieto un momento sobre algo hace clic (verá un anillo que se llena).\n"
-               "• Abrir la boca también hace clic. Sostenerla abierta dos segundos pausa el programa.\n"
+               "• Abrir la boca un momento también hace clic. Sostenerla abierta dos segundos pausa el programa.\n"
                "• Levantar las cejas hace clic derecho.\n"
                "• Los parpadeos normales nunca hacen clic.\n\n"
                "Todo esto se puede cambiar en Opciones."),
     "asis_4_titulo": "Ahora, la calibración",
-    "asis_4": ("Vamos a ajustar el programa a su forma de moverse. Toma más o menos un minuto y cada paso "
+    "asis_4": ("Vamos a ajustar el programa a su forma de moverse. Toma unos dos minutos y cada paso "
                "avanza solo."),
     "asis_calibrar": "Empezar la calibración",
 
@@ -271,7 +276,7 @@ TXT: dict[str, str] = {
     "op_gesto_largo": "Al sostenerlo 2 segundos",
     "op_gesto_nivel": "Pruébelo ahora:",
     "op_parpadeo_largo": "Duración del parpadeo largo",
-    "op_parpadeo_fuera": "Parpadeo largo fuera del teclado",
+    "op_parpadeo_fuera": "Parpadeo largo cuando no está en barrido",
     "op_parpadeo_doble": "Exigir dos parpadeos largos",
     "op_parpadeo_nota": "Los parpadeos normales nunca hacen nada, sin importar lo que elija aquí.",
     "op_distribucion": "Orden de las letras",
@@ -293,7 +298,7 @@ TXT: dict[str, str] = {
     "op_genero_neutro": "Neutro",
     "op_genero_masculino": "Masculino",
     "op_genero_femenino": "Femenino",
-    "op_solo_com": "Solo comunicación (el puntero no se mueve)",
+    "op_solo_com": "Solo comunicación (teclado siempre abierto, con barrido)",
     "op_editar_frases": "Editar las frases rápidas",
     "op_escala": "Tamaño de la letra",
     "op_alto_contraste": "Alto contraste (negro y amarillo)",
@@ -442,8 +447,10 @@ TXT: dict[str, str] = {
                   "• Barra de acciones: elija Doble, Derecho, Arrastrar o Desplazar antes de hacer clic. "
                   "Después vuelve sola al clic normal.\n"
                   "• Teclado: escriba, hable con la voz del computador o use las frases rápidas.\n"
-                  "• Pausa: sostenga la boca abierta dos segundos. Para reanudar, sosténgala tres segundos "
-                  "o quédese quieto sobre «Reanudar».\n"
+                  "• Pausa: sostenga la boca abierta dos segundos y ciérrela. Para reanudar, ábrala unos tres "
+                  "segundos y ciérrela, o quédese quieto sobre «Reanudar». Un bostezo muy largo no cuenta.\n"
+                  "• Con barrido o «Solo comunicación»: en pausa, cierre los ojos dos veces seguidas, cada vez "
+                  "un momento largo, para seguir.\n"
                   "• Si cambió de posición, elija «Recentrar» mirando al frente."),
     "ayuda_cuidador": ("• Instalación: no pide permisos de administrador.\n"
                        "• Cámara a la altura de los ojos, a 50 o 70 cm; luz de frente, sin ventana detrás.\n"
@@ -452,11 +459,18 @@ TXT: dict[str, str] = {
                        "• Atajos: Ctrl+Alt+Espacio = pausar o reanudar; Ctrl+Alt+T = teclado; "
                        "Ctrl+Alt+C = recentrar; Ctrl+Alt+Inicio = mostrar la ventana; Ctrl+Alt+Fin = salir.\n"
                        "• Si la persona se cansa: suba la velocidad del puntero para mover menos el cuello, "
-                       "o use el barrido del teclado."),
+                       "o use el barrido del teclado.\n"
+                       "• Si la persona solo puede parpadear: en Opciones › Teclado y voz ponga «Solo comunicación» "
+                       "en Sí. El teclado queda siempre abierto con barrido, un parpadeo largo sirve para elegir y dos "
+                       "parpadeos largos seguidos quitan la pausa.\n"
+                       "• Si usted pausa con el atajo o con el ratón, la boca no la quita (así un bostezo o la "
+                       "comida no reactivan el puntero); sí el botón «Reanudar» y el atajo."),
     "ayuda_problemas": ("• «No veo su cara»: acerque la persona o mejore la luz de frente.\n"
                         "• El puntero tiembla: suba la suavidad en Opciones › Puntero.\n"
                         "• Hace clics sin querer: alargue el tiempo quieto en Opciones › Clic, o apague el "
                         "clic al quedarse quieto y use solo gestos.\n"
+                        "• Si tose o se ríe con la boca abierta, puede hacer clic: suba el tiempo de la boca en "
+                        "Opciones › Gestos o apague ese gesto.\n"
                         "• No llega a los bordes: repita la calibración o suba la velocidad.\n"
                         "• Con poca luz, sostenga el parpadeo largo un poco más.\n"
                         "• No escribe en un programa: puede estar abierto como administrador.\n\n"
@@ -510,8 +524,15 @@ def subtitulo(vista) -> str:
     m = getattr(vista, "maquina", vista)
     if m.recentrando is not None:
         return TXT["sub_recentrando"]
+    cam = getattr(vista, "camara", None)
+    if cam in ("NO_ABRE", "OCUPADA", "PERDIDA") and m.estado in (K.PAUSA, K.SIN_CARA):
+        return TXT[f"sub_camara_{cam}"]
     if m.estado == K.PAUSA:
-        return TXT["sub_PAUSA_auto"] if m.pausa_auto else TXT["sub_PAUSA"]
+        if m.pausa_auto:
+            return TXT["sub_PAUSA_auto"]
+        if getattr(m, "reanuda_parpadeo", False):
+            return TXT["sub_PAUSA_parpadeo"]
+        return TXT["sub_PAUSA"]
     if m.estado == K.ACTIVO and m.submodo != K.NORMAL:
         return TXT.get(f"sub_{m.submodo}", TXT["sub_ACTIVO"])
     return TXT.get(f"sub_{m.estado}", "")

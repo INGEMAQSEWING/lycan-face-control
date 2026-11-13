@@ -34,6 +34,10 @@ REINTENTO_BLOQUEO_S = 2.0       # tras un SendInput rechazado, cada cuánto se p
 ESPERA_CUADRO_S = 0.1
 PASO_SIN_CUADRO_S = 0.25        # sin cuadros nuevos, igual corren los relojes (sin cara, etc.)
 REGISTRO_RENDIMIENTO_S = 60.0
+REVISAR_MONITOR_S = 2.0         # cada cuánto se relee el monitor (televisor conectado, resolución...)
+REVISAR_CAMARA_S = 2.0          # cada cuánto se revisa que el hilo de la cámara siga vivo
+# estado de la cámara -> aviso para la persona (en vez de "No veo su cara")
+AVISOS_CAMARA = {"NO_ABRE": "no_camara", "OCUPADA": "camara_ocupada", "PERDIDA": "camara_perdida"}
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,11 @@ class Motor(threading.Thread):
         self._t_reintento = None
         self._t_registro = None
         self.fatal = False
+        self._monitor_auto = False          # el monitor lo eligió el motor: se relee
+        self._t_monitor = None
+        self._camara_propia = False         # la cámara la creó el motor: se puede recrear
+        self._t_camara = None
+        self._aviso_camara = None           # último aviso de cámara dado (sin repetir)
 
     # ------------------------------------------------------------- arranque
     def preparar(self):
@@ -121,6 +130,7 @@ class Motor(threading.Thread):
         pueden llamarlo y luego usar ``vuelta()`` sin hilo."""
         if self.monitor is None and self.sistema:
             from .sistema import pantallas
+            self._monitor_auto = True
             self.monitor = pantallas.elegir((self.cfg.get("pantalla") or {}).get("monitor", "principal"))
             if hasattr(self.salida, "actualizar_pantalla"):
                 try:
@@ -130,15 +140,77 @@ class Motor(threading.Thread):
         if self.maquina is None:
             self.maquina = Maquina(self.cfg, self.monitor, pos_cursor=self._pos_cursor, t0=self.reloj())
         if self.camara is None:
-            from .captura import Camara
-            cam = self.cfg["camara"]
-            self.camara = Camara(cam["indice"], cam["ancho"], cam["alto"], cam["fps"], cam.get("espejo", True))
-            self.camara.al_perder = lambda: self.ordenes.put(("camara_perdida",))
+            self.camara = self._nueva_camara()
+            self._camara_propia = True
         if hasattr(self.camara, "is_alive") and not self.camara.is_alive() and hasattr(self.camara, "start"):
             self.camara.start()
         if self.detector is None:
             from .detector import Detector
             self.detector = Detector()
+
+    def _nueva_camara(self):
+        from .captura import Camara
+        cam = self.cfg["camara"]
+        c = Camara(cam["indice"], cam["ancho"], cam["alto"], cam["fps"], cam.get("espejo", True))
+        c.al_perder = lambda: self.ordenes.put(("camara_perdida",))
+        return c
+
+    def _vigilar_camara(self, t: float):
+        """Avisa con palabras claras si no hay cámara o la usa otro programa (una vez por cambio) y,
+        si el hilo de la cámara murió sin que nadie lo pidiera, crea otro."""
+        cam = self.camara
+        estado = getattr(cam, "estado", "")
+        clave = AVISOS_CAMARA.get(estado)
+        if estado == "FUNCIONANDO":
+            self._aviso_camara = None
+        elif clave is not None and clave != self._aviso_camara:
+            self._aviso_camara = clave
+            self.salida.soltar_todo("cámara: " + estado)
+            self.avisos.put(Aviso(clave))
+        if not self._camara_propia or self._parar.is_set():
+            return
+        if self._t_camara is not None and t - self._t_camara < REVISAR_CAMARA_S:
+            return
+        self._t_camara = t
+        try:
+            muerta = getattr(cam, "ident", None) is not None and not cam.is_alive() \
+                and not getattr(cam, "_parar").is_set()
+        except Exception:  # noqa: BLE001
+            muerta = False
+        if muerta:
+            log.error("El hilo de la cámara se detuvo solo; se abre otra vez")
+            try:
+                self.camara = self._nueva_camara()
+                self.camara.start()
+                self._numero = 0
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudo volver a abrir la cámara")
+
+    def revisar_monitor(self, t: float, forzar: bool = False):
+        """Relee el monitor (conectar un televisor, cambiar la resolución o la escala). Si cambió,
+        rehace el mapeo y la permanencia conservando la calibración."""
+        if not self._monitor_auto:
+            return
+        if not forzar and self._t_monitor is not None and t - self._t_monitor < REVISAR_MONITOR_S:
+            return
+        self._t_monitor = t
+        try:
+            from .sistema import pantallas
+            nuevo = pantallas.elegir((self.cfg.get("pantalla") or {}).get("monitor", "principal"))
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo releer el monitor")
+            return
+        if nuevo is None or nuevo == self.monitor:
+            return
+        log.info("Cambió la pantalla: %s -> %s", self.monitor, nuevo)
+        self.monitor = nuevo
+        if hasattr(self.salida, "actualizar_pantalla"):
+            try:
+                self.salida.actualizar_pantalla()
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudo leer el escritorio")
+        if self.maquina is not None:
+            self._aplicar(self.maquina.cambiar_monitor(t, nuevo))
 
     def _pos_cursor(self):
         try:
@@ -210,6 +282,9 @@ class Motor(threading.Thread):
     def vuelta(self):
         """Una vuelta: órdenes, último cuadro, detector y un paso de la máquina."""
         self._atender_ordenes()
+        ahora = self.reloj()
+        self._vigilar_camara(ahora)
+        self.revisar_monitor(ahora)
         with self._lock_obj:
             nuevos, self._objetivos = self._objetivos, None
         if nuevos is not None:
@@ -359,6 +434,7 @@ class Motor(threading.Thread):
         elif nombre == "config":
             self.cfg = arg
             self._aplicar(m.nueva_config(t, arg, o[2] if len(o) > 2 else None))
+            self.revisar_monitor(t, forzar=True)
         elif nombre == "calibrar":
             if arg:
                 self._aplicar(m.iniciar_calibracion(t))
@@ -368,8 +444,7 @@ class Motor(threading.Thread):
         elif nombre == "soltar":
             self.salida.soltar_todo(arg or "orden")
         elif nombre == "camara_perdida":
-            self.salida.soltar_todo("cámara perdida")
-            self.avisos.put(Aviso("camara_perdida"))
+            self.salida.soltar_todo("cámara perdida")       # el aviso lo da _vigilar_camara
         elif nombre == "error_externo":
             self.salida.soltar_todo("error")
             self._aplicar(m.por_error(t, arg if isinstance(arg, Exception) else RuntimeError(str(arg))))

@@ -40,6 +40,15 @@ ID_BARRIDO_SIGUIENTE = "barrido:siguiente"
 ID_REANUDAR_TECLADO = "teclado:reanudar"   # el botón Pausa del teclado en pantalla, en pausa
 IDS_REANUDAR = (ID_REANUDAR, "barra:pausa", ID_REANUDAR_TECLADO)
 REANUDAR_PERMANENCIA_S = 2.0          # permanencia sobre "Reanudar" (más larga que un botón normal)
+REANUDAR_VENTANA_S = 2.5              # el gesto de reanudar vale si se suelta entre reanudar_ms y +2,5 s
+# Pausas puestas por el cuidador (atajo, ratón, Opciones): ningún gesto de la cara las quita (un
+# bostezo o comer no deben reactivar el puntero). Sí el botón "Reanudar" con la cabeza, el atajo y,
+# con barrido, el doble parpadeo largo (quien solo parpadea siempre tiene que poder pedir ayuda).
+MOTIVOS_CUIDADOR = ("atajo", "cuidador", "opciones")
+# Cara distinta (otra persona entra en el cuadro y FaceMesh la sigue): salto brusco de un cuadro
+SALTO_IO = 0.25                       # el tamaño de la cara cambia más de 25 %
+SALTO_CENTRO_IO = 0.5                 # o el centro salta más de media distancia entre ojos
+CARA_ESTABLE_S = 1.0                  # tras un salto: 1 s de cara estable antes de aceptar clics
 
 ESTABLE_PARA_REANUDAR_S = 1.0         # pausa automática: cara estable 1 s para seguir
 RECENTRAR_S = 1.5
@@ -74,6 +83,7 @@ class Vista:
     arrastre_s: float = 0.0
     medidas: object = None
     objetivo: str | None = None
+    reanuda_parpadeo: bool = False              # en pausa: dos parpadeos largos reanudan
 
 
 @dataclass
@@ -121,6 +131,9 @@ class Maquina:
         self.fatal = False
         self._ultima_vista = Vista()
         self._ultimas_medidas = None
+        self._m_ant = None                        # medidas del cuadro anterior (para "cara distinta")
+        self._t_cara_nueva = None                 # tras un salto: desde cuándo la cara está estable
+        self._por_cuidador = False
 
     # ------------------------------------------------------------ armado
     def _construir(self, conservar_pos: bool = False):
@@ -160,6 +173,12 @@ class Maquina:
         if t is not None:
             self.puntero.reiniciar_filtros(t)
         return acciones
+
+    def cambiar_monitor(self, t: float | None, monitor: Monitor) -> list:
+        """La pantalla cambió (otro monitor, otra resolución): se rehace el mapeo conservando la
+        calibración y el estado."""
+        self.monitor = monitor
+        return self.nueva_config(t, self.cfg)
 
     def poner_objetivos(self, objetivos):
         """Lista de ``permanencia.Objetivo`` en píxeles físicos de pantalla (la publica la interfaz)."""
@@ -205,6 +224,16 @@ class Maquina:
         if self.submodo in SUBMODOS_SIN_PUNTERO:
             return True
         return self.cfg["gestos"]["parpadeo"].get("fuera_barrido", "ninguna") != "ninguna"
+
+    def _reanuda_con_doble_parpadeo(self) -> bool:
+        """Quien usa el barrido (o "solo comunicación") solo cuenta con los párpados: en pausa,
+        dos parpadeos largos seguidos reanudan, la haya puesto quien la haya puesto."""
+        tec = self.cfg["teclado"]
+        return bool(tec.get("solo_comunicacion") or tec.get("barrido")) or self.submodo in SUBMODOS_SIN_PUNTERO
+
+    def reanuda_con_parpadeo(self) -> bool:
+        """Para la interfaz: en pausa, ¿se puede seguir con dos parpadeos largos?"""
+        return self.gestos.encendido("parpadeo") and self._reanuda_con_doble_parpadeo()
 
     def _gestos_de_pausa(self):
         g = self.cfg["gestos"]
@@ -293,7 +322,11 @@ class Maquina:
                 self._reanudar(t, "botón Reanudar", acc)
             return acc
         if self.estado in (K.ACTIVO, K.SIN_CARA):
-            self._elegir(str(ident), t, self.puntero.posicion, acc)
+            self._por_cuidador = True          # una pausa desde aquí la puso el cuidador
+            try:
+                self._elegir(str(ident), t, self.puntero.posicion, acc)
+            finally:
+                self._por_cuidador = False
         return acc
 
     def poner_submodo(self, t: float, submodo: str) -> list:
@@ -359,8 +392,24 @@ class Maquina:
         dt = 0.05 if self._t_ant is None else min(max(t - self._t_ant, 0.0), 0.5)
         self._t_ant = t
         self._ultimas_medidas = medidas
+        cambio = self._cara_distinta(medidas, t)
+        if cambio:
+            self.gestos.perder_cara(t)          # los gestos en curso no son de esta cara
         g = self.gestos.actualizar(medidas, t)
+        if self._t_cara_nueva is not None:
+            if t - self._t_cara_nueva < CARA_ESTABLE_S - 1e-9:
+                g.eventos = []                  # todavía no se aceptan gestos de esta cara
+                g.soltados = []
+            else:
+                self._t_cara_nueva = None
         st = EstadoPermanencia()
+        if cambio and self.estado != K.CALIBRANDO:
+            acc.append(SoltarTodo("cara distinta"))
+            self._salir_de_submodos_con_boton(acc)
+            self.perm.reiniciar()
+            if self.estado != K.PAUSA:
+                acc.append(Aviso("cara_distinta"))
+            log.info("Cambió la cara del cuadro: se suelta todo y se espera 1 s de cara estable")
         if self.estado == K.CALIBRANDO:
             return Resultado(acc, self._vista(t, g, st, medidas))
         if medidas is None:
@@ -388,6 +437,32 @@ class Maquina:
         else:
             st = self._en_activo(t, medidas, g, dt, acc)
         return Resultado(acc, self._vista(t, g, st, medidas))
+
+    def _cara_distinta(self, m, t: float) -> bool:
+        """Salto brusco de tamaño o de posición de la cara entre dos cuadros seguidos: casi
+        seguro es otra persona (FaceMesh sigue una sola cara). Mientras la cara no esté estable
+        1 s, cada salto nuevo vuelve a empezar la espera."""
+        ant = self._m_ant
+        self._m_ant = m
+        if m is None or ant is None:
+            return False
+        try:
+            io0, io1 = float(ant.io_px), float(m.io_px)
+            if not (io0 > 0 and io1 > 0):
+                return False
+            salto = abs(io1 - io0) / io0 > SALTO_IO
+            c0, c1 = getattr(ant, "centro", None), getattr(m, "centro", None)
+            if not salto and c0 is not None and c1 is not None:
+                d = math.hypot(c1[0] - c0[0], c1[1] - c0[1])
+                salto = math.isfinite(d) and d > SALTO_CENTRO_IO * max(io0, io1)
+        except (TypeError, ValueError):
+            return False
+        if salto:
+            self._t_cara_nueva = t
+        return salto
+
+    def _cara_en_espera(self, t: float) -> bool:
+        return self._t_cara_nueva is not None and t - self._t_cara_nueva < CARA_ESTABLE_S - 1e-9
 
     def _sin_cara(self, t: float, acc: list):
         self._t_cara_desde = None
@@ -437,12 +512,16 @@ class Maquina:
             self._reanudar(t, "cara de nuevo", acc)
             return EstadoPermanencia()
         reanudar_s = self.cfg["gestos"]["reanudar_ms"] / 1000.0
-        for nombre in self._gestos_de_pausa():
-            if self.gestos.duracion_sostenida(nombre, t) >= reanudar_s - 1e-9:
-                self.gestos.consumir(nombre)
-                self._reanudar(t, f"gesto {nombre}", acc)
-                return EstadoPermanencia()
-        if self.cfg["teclado"].get("solo_comunicacion") or self.submodo == K.SOLO_COMUNICACION:
+        if self.motivo_pausa not in MOTIVOS_CUIDADOR:
+            # el gesto vale al SOLTARLO, si duró entre reanudar_ms y 2,5 s más (más largo es un
+            # bostezo o un descanso; con los ojos cerrados es bostezo y ni siquiera llega aquí)
+            pausa = self._gestos_de_pausa()
+            for sol in g.soltados:
+                if sol.nombre in pausa and \
+                        reanudar_s - 1e-9 <= sol.duracion_ms / 1000.0 <= reanudar_s + REANUDAR_VENTANA_S:
+                    self._reanudar(t, f"gesto {sol.nombre}", acc)
+                    return EstadoPermanencia()
+        if self._reanuda_con_doble_parpadeo():
             if any(isinstance(e, DobleParpadeoLargo) for e in g.eventos):
                 self._reanudar(t, "doble parpadeo", acc)
                 return EstadoPermanencia()
@@ -462,7 +541,8 @@ class Maquina:
     def _en_activo(self, t: float, m, g: ResultadoGestos, dt: float, acc: list) -> EstadoPermanencia:
         sub = self.submodo
         congelar = (g.gesto_activo or (g.ojos_cerrando and self._parpadeo_con_accion())
-                    or self._recentrar is not None or sub == K.DESPLAZAR or sub in SUBMODOS_SIN_PUNTERO)
+                    or self._recentrar is not None or sub == K.DESPLAZAR or sub in SUBMODOS_SIN_PUNTERO
+                    or self._cara_en_espera(t))
         if congelar:
             self.puntero.congelar(t)
         else:
@@ -692,7 +772,7 @@ class Maquina:
         elif ident == ID_TERMINAR_DESPLAZAR:
             self._terminar_desplazar(t, acc)
         elif ident == "barra:pausa":
-            self._pausar(t, "botón Pausa", acc)
+            self._pausar(t, "cuidador" if self._por_cuidador else "botón Pausa", acc)
         elif ident == "barra:teclado":
             acc.append(Aviso("teclado"))
 
@@ -709,7 +789,8 @@ class Maquina:
             recentrando=(min((t - r["t0"]) / RECENTRAR_S, 1.0) if r is not None else None),
             calibrado=self.calibracion is not None, congelado=self.puntero.congelado,
             arrastre_s=(t - self._t_arrastre) if self._t_arrastre is not None else 0.0,
-            medidas=m, objetivo=self._obj_actual.id if self._obj_actual is not None else None)
+            medidas=m, objetivo=self._obj_actual.id if self._obj_actual is not None else None,
+            reanuda_parpadeo=self.estado == K.PAUSA and self.reanuda_con_parpadeo())
         self._ultima_vista = v
         return v
 

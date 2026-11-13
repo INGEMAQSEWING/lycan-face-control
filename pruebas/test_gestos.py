@@ -109,7 +109,8 @@ def test_un_solo_ojo_cerrado_no_hace_nada():
         claves = [(0.0, {}), (1.0, {}), (1.03, {ojo: 0.0}), (2.0, {ojo: 0.0}), (2.03, {}), (3.0, {})]
         eventos, res, _ = correr(secuencia(claves))
         assert eventos == []
-        assert any(r.ojos_cerrando for _, r in res)        # sí congela (empezó a cerrar)
+        # un solo ojo (párpado caído, ojo entrecerrado) no congela ni el puntero ni el barrido
+        assert not any(r.ojos_cerrando for _, r in res)
 
 
 def test_piso_de_400_ms_aunque_la_config_diga_100():
@@ -159,11 +160,11 @@ def test_doble_sin_la_opcion_igual_se_informa():
 
 
 # ---------------------------------------------------------------- boca, cejas, sonrisa
-def test_boca_500_ms_es_corto_al_soltar():
-    claves = [(0.0, {})] + boca(1.0, 0.5) + [(2.5, {})]
+def test_boca_800_ms_es_corto_al_soltar():
+    claves = [(0.0, {})] + boca(1.0, 0.8) + [(2.5, {})]
     eventos, _, _ = correr(secuencia(claves))
     assert tipos(eventos) == ["GestoCorto:boca"]
-    assert eventos[0][0] >= 1.4             # al soltar (tiene acción larga)
+    assert eventos[0][0] >= 1.7             # al soltar (tiene acción larga)
 
 
 def test_boca_2200_ms_es_solo_largo():
@@ -177,7 +178,7 @@ def test_boca_sin_accion_larga_dispara_al_cumplir_sostener():
     claves = [(0.0, {})] + boca(1.0, 2.0) + [(4.0, {})]
     eventos, _, _ = correr(secuencia(claves), cfg)
     assert tipos(eventos) == ["GestoCorto:boca"]
-    assert eventos[0][0] < 1.5
+    assert eventos[0][0] < 1.75
 
 
 def test_boca_muy_corta_no_hace_nada():
@@ -228,8 +229,8 @@ def test_histeresis_sin_rebotes():
 def test_refractario_entre_gestos():
     cfg = cfg_prueba(**{"gestos.cejas.largo": "ninguna"})
     # boca termina a 1,5 s; cejas empiezan a 1,6 s (dentro de los 600 ms): no cuentan
-    claves = [(0.0, {}), (1.0, {}), (1.05, {"boca": 1.0}), (1.45, {"boca": 1.0}), (1.5, {}),
-              (1.6, {}), (1.65, {"cejas": 1.0}), (2.4, {"cejas": 1.0}), (2.45, {}),
+    claves = [(0.0, {}), (1.0, {}), (1.05, {"boca": 1.0}), (1.75, {"boca": 1.0}), (1.8, {}),
+              (1.9, {}), (1.95, {"cejas": 1.0}), (2.4, {"cejas": 1.0}), (2.45, {}),
               (3.0, {}), (3.05, {"cejas": 1.0}), (3.6, {"cejas": 1.0}), (3.65, {}), (4.5, {})]
     eventos, _, _ = correr(secuencia(claves), cfg)
     assert tipos(eventos) == ["GestoCorto:boca", "GestoCorto:cejas"]
@@ -273,7 +274,7 @@ def test_perder_la_cara_reinicia_sin_eventos():
 
 
 def test_sensibilidad_y_umbral_calibrado():
-    claves = [(0.0, {})] + boca(1.0, 0.6, nivel=0.25) + [(2.5, {})]
+    claves = [(0.0, {})] + boca(1.0, 0.8, nivel=0.25) + [(2.5, {})]
     eventos, _, _ = correr(secuencia(claves))
     assert eventos == []                     # boca a medias: no llega con sensibilidad 1
     cfg = cfg_prueba(**{"gestos.boca.sens": 2.0})
@@ -285,7 +286,7 @@ def test_sensibilidad_y_umbral_calibrado():
 
 
 def test_sin_calibracion_usa_la_base_de_referencia():
-    claves = [(0.0, {})] + boca(1.0, 0.6) + [(2.5, {})]
+    claves = [(0.0, {})] + boca(1.0, 0.8) + [(2.5, {})]
     eventos, _, g = correr(secuencia(claves), cal=None)
     assert not g.calibrado
     assert tipos(eventos) == ["GestoCorto:boca"]
@@ -314,3 +315,123 @@ def test_duracion_sostenida_y_consumir():
     for i in range(30):
         ev += g.actualizar(medidas(), t + (i + 1) / 30).eventos
     assert ev == []                          # consumido: al soltar no hay GestoLargo
+
+
+# ---------------------------------------------------------------- ronda 1 de arreglos (clics falsos)
+REP = dict(ear_der=0.357, ear_izq=0.375)
+
+
+def _correr_medidas(pasos, cfg=None, fps=30, t0=0.0):
+    """``pasos``: [(segundos, dict de medidas | None)]. Devuelve (eventos, resultados)."""
+    g = Gestos((cfg or cfg_prueba())["gestos"], CAL_SINTETICA)
+    t, dt = t0, 1.0 / fps
+    eventos, res = [], []
+    for seg, kw in pasos:
+        fin = t + seg - 1e-9
+        primero = True
+        while t < fin or primero:
+            primero = False
+            r = g.actualizar(None if kw is None else medidas(**kw), t)
+            eventos += [(t, e) for e in r.eventos]
+            res.append((t, r))
+            t += dt
+            if kw is None:
+                break                     # un solo cuadro sin cara
+    return eventos, res
+
+
+CERRADOS = dict(ear_der=0.1, ear_izq=0.1)
+
+
+def test_cejas_sostenidas_con_caras_perdidas_dan_un_solo_clic():
+    pasos = [(1.0, {})]
+    for _ in range(5):
+        pasos += [(2.0, {"cejas": 0.356 * 1.25}), (0, None)]
+    pasos.append((1.0, {}))
+    eventos, _ = _correr_medidas(pasos)
+    assert tipos(eventos) == ["GestoCorto:cejas"]
+
+
+def test_boca_sin_largo_sostenida_con_caras_perdidas_un_solo_evento():
+    cfg = cfg_prueba(**{"gestos.boca.largo": "ninguna"})
+    pasos = [(1.0, {})]
+    for _ in range(4):
+        pasos += [(1.5, {"mar": 0.6}), (0, None), (0, None)]
+    pasos.append((1.0, {}))
+    eventos, _ = _correr_medidas(pasos, cfg)
+    assert tipos(eventos) == ["GestoCorto:boca"]
+    # tras volver a reposo con la cara presente, sí vuelve a funcionar
+    pasos += [(0.8, {"mar": 0.6}), (1.0, {})]
+    eventos, _ = _correr_medidas(pasos, cfg)
+    assert tipos(eventos) == ["GestoCorto:boca", "GestoCorto:boca"]
+
+
+def test_gesto_que_ya_esta_arriba_al_volver_la_cara_no_cuenta():
+    cfg = cfg_prueba(**{"gestos.boca.largo": "ninguna"})
+    eventos, _ = _correr_medidas([(1.0, {}), (0, None), (1.0, {"mar": 0.6}), (1.0, {})], cfg)
+    assert eventos == []
+
+
+def test_descanso_con_cara_perdida_un_cuadro_no_es_parpadeo_largo():
+    pasos = [(1.0, {}), (8.0, CERRADOS), (0, None), (1.0, CERRADOS), (1.0, {})]
+    eventos, _ = _correr_medidas(pasos)
+    assert [e for _, e in eventos if isinstance(e, ParpadeoLargo)] == []
+    assert len([e for _, e in eventos if isinstance(e, ParpadeoListo)]) == 1     # solo el del comienzo
+
+
+def test_hueco_corto_sin_cara_no_corta_un_parpadeo_largo_de_verdad():
+    pasos = [(1.0, {}), (0.5, CERRADOS), (0, None), (0.5, CERRADOS), (1.0, {})]
+    eventos, _ = _correr_medidas(pasos)
+    assert len([e for _, e in eventos if isinstance(e, ParpadeoLargo)]) == 1
+
+
+def test_hueco_largo_sin_cara_anula_el_cierre():
+    pasos = [(1.0, {}), (0.5, CERRADOS)] + [(0, None)] * 15 + [(0.8, CERRADOS), (1.0, {})]
+    eventos, _ = _correr_medidas(pasos)
+    assert [e for _, e in eventos if isinstance(e, ParpadeoLargo)] == []
+    # y uno que ya viene cerrado al volver la cara tampoco
+    pasos = [(1.0, {})] + [(0, None)] * 15 + [(1.2, CERRADOS), (1.0, {})]
+    eventos, _ = _correr_medidas(pasos)
+    assert [e for _, e in eventos if isinstance(e, ParpadeoLargo)] == []
+
+
+def test_rafaga_con_reapertura_parcial_no_se_junta_en_un_largo():
+    a = dict(ear_der=0.357 * 0.65, ear_izq=0.375 * 0.65)
+    pasos = [(1.0, {})] + [(0.15, CERRADOS), (0.25, a)] * 4 + [(1.0, {})]
+    eventos, _ = _correr_medidas(pasos, fps=20)
+    assert [e for _, e in eventos if isinstance(e, (ParpadeoLargo, ParpadeoListo))] == []
+
+
+@pytest.mark.parametrize("fps", (30, 20))
+def test_rafaga_rapida_con_dos_cuadros_abiertos_no_se_junta(fps):
+    pasos = [(1.0, {})] + [(0.2, CERRADOS), (2.0 / fps, {})] * 4 + [(1.0, {})]
+    eventos, _ = _correr_medidas(pasos, fps=fps)
+    assert [e for _, e in eventos if isinstance(e, (ParpadeoLargo, ParpadeoListo))] == []
+
+
+def test_ojos_entrecerrados_no_son_parpadeo_largo():
+    medio = dict(ear_der=0.357 * 0.5, ear_izq=0.375 * 0.5)
+    eventos, res = _correr_medidas([(1.0, {}), (2.0, medio), (1.0, {})], fps=20)
+    assert [e for _, e in eventos if isinstance(e, (ParpadeoLargo, ParpadeoListo))] == []
+    assert not any(r.parpadeo_listo for _, r in res)
+
+
+def test_bostezo_con_ojos_cerrados_no_elige_ni_hace_gesto_de_boca():
+    pasos = [(1.0, {}), (0.5, {"mar": 0.7}), (1.2, dict(CERRADOS, mar=0.7)), (1.3, {"mar": 0.7}), (1.0, {})]
+    eventos, _ = _correr_medidas(pasos)
+    assert eventos == [], tipos(eventos)
+
+
+def test_cierre_con_cejas_arriba_no_es_parpadeo_largo():
+    pasos = [(1.0, {}), (1.0, dict(CERRADOS, cejas=0.356 * 1.25)), (1.0, {})]
+    eventos, _ = _correr_medidas(pasos, cfg_prueba(**{"gestos.cejas.activo": False}))
+    assert [e for _, e in eventos if isinstance(e, ParpadeoLargo)] == []
+
+
+def test_boca_abierta_mas_de_cinco_segundos_no_es_gesto_largo():
+    eventos, _ = _correr_medidas([(1.0, {}), (5.5, {"mar": 0.7}), (1.0, {})])
+    assert eventos == []
+    eventos, res = _correr_medidas([(1.0, {}), (3.0, {"mar": 0.7}), (1.0, {})])
+    assert tipos(eventos) == ["GestoLargo:boca"]
+    soltados = [s for _, r in res for s in r.soltados]
+    assert len(soltados) == 1 and soltados[0].nombre == "boca" and 2900 <= soltados[0].duracion_ms <= 3100

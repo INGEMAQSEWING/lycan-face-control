@@ -87,7 +87,7 @@ def test_permanencia_apagada_solo_gestos():
     ir(s, 0.3)
     quieto(s, 3.0)
     assert s.clics() == []
-    boca(s, 0.5)
+    boca(s, 0.8)
     assert s.clics() == [Clic("izq")]
 
 
@@ -108,7 +108,7 @@ def test_boca_corta_es_clic_y_no_se_suma_la_permanencia():
     s = Sim()
     quieto(s, 0.3)
     ir(s, 0.3)
-    boca(s, 0.5)
+    boca(s, 0.8)
     quieto(s, 3.0)
     assert s.clics() == [Clic("izq")]
 
@@ -147,7 +147,7 @@ def test_en_pausa_no_mueve_ni_hace_clic():
     s.limpiar()
     ir(s, 0.6)
     quieto(s, 3.0)
-    boca(s, 0.5)
+    boca(s, 0.8)
     s.quieto(0.6, cejas=0.5)
     assert s.de_tipo(Mover) == [] and s.clics() == []
     assert s.maquina.vista.puntero_virtual is not None
@@ -280,10 +280,10 @@ def test_arrastre_con_gesto():
     s = Sim(cfg_prueba(**{"gestos.boca.corto": "arrastrar"}))
     quieto(s, 0.3)
     ir(s, 0.2)
-    boca(s, 0.5)
+    boca(s, 0.8)
     assert s.salida.botones_abajo == ["izq"]
     ir(s, -0.2)
-    boca(s, 0.5)
+    boca(s, 0.8)
     assert s.salida.botones_abajo == []
     verificar_invariantes(s.salida)
 
@@ -352,7 +352,7 @@ def test_barra_por_permanencia_nunca_hace_clic_en_windows():
     assert s.maquina.modo_clic == "der"
     # gesto de clic sobre la barra: también elige, sin clic
     s.limpiar()
-    boca(s, 0.5)
+    boca(s, 0.8)
     assert s.clics() == [] and s.elegidos()
     # sobre la ventana de la barra pero fuera de un botón: ni clic ni permanencia
     s.limpiar()
@@ -394,7 +394,7 @@ def test_desplazar_termina_con_un_gesto_de_clic():
     s = Sim()
     quieto(s, 0.3)
     s.orden("elegir", "barra:desplazar")
-    boca(s, 0.5)
+    boca(s, 0.8)
     assert s.maquina.submodo == K.NORMAL
     assert s.clics() == []
 
@@ -427,7 +427,7 @@ def test_en_barrido_el_puntero_no_se_mueve():
     quieto(s, 3.0)
     assert s.de_tipo(Mover) == [] and s.clics() == []
     # un gesto de clic (boca) elige lo resaltado
-    boca(s, 0.5)
+    boca(s, 0.8)
     assert s.elegidos() == ["barrido:elegir"] and s.clics() == []
 
 
@@ -469,7 +469,7 @@ def test_calibrando_no_envia_nada_y_suelta_al_entrar():
     s.limpiar()
     ir(s, 0.5)
     quieto(s, 3.0)
-    boca(s, 0.5)
+    boca(s, 0.8)
     assert s.acciones == [] or all(not isinstance(a, (Mover, Clic, Bajar)) for _, a in s.acciones)
     s.orden("terminar_calibracion", None)
     assert s.maquina.estado == K.ACTIVO

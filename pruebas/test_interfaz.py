@@ -90,7 +90,7 @@ def test_pasos_de_los_controles_respetan_los_rangos():
     assert OP.paso_numero(d, "permanencia.tiempo_s", 0.1, +1) == 3.0
     d["permanencia"]["tiempo_s"] = 0.4
     assert OP.paso_numero(d, "permanencia.tiempo_s", 0.1, -1) == 0.4
-    assert OP.paso_numero(d, "gestos.boca.sostener_ms", 50, +1) == 400
+    assert OP.paso_numero(d, "gestos.boca.sostener_ms", 50, +1) == 650
     assert isinstance(OP.paso_numero(d, "gestos.boca.sostener_ms", 50, +1), int)
     # descanso: 0 (apagado) <-> 10 minutos
     assert OP.paso_numero(d, "comodidad.descanso_min", 5, +1) == 10

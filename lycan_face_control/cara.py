@@ -41,6 +41,7 @@ class Medidas:
     mar: float        # apertura de la boca
     cejas: float      # altura de las cejas
     sonrisa: float    # ancho de la boca
+    centro: tuple | None = None   # punto medio de los ojos en la imagen (px): para notar otra cara
 
     def como_dict(self) -> dict:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -92,7 +93,8 @@ def medir(puntos) -> Medidas:
     sonrisa = _d(P, COMISURA_DER, COMISURA_IZQ) / io
     return Medidas(io_px=io, yaw_n=yaw_n, pitch_n=pitch_n, roll=roll,
                    ear_der=ear(P, EAR_DER), ear_izq=ear(P, EAR_IZQ),
-                   mar=mar, cejas=cejas, sonrisa=sonrisa)
+                   mar=mar, cejas=cejas, sonrisa=sonrisa,
+                   centro=(float(ojos[0]), float(ojos[1])))
 
 
 def puntos_validos(puntos, ancho: float | None = None, alto: float | None = None,

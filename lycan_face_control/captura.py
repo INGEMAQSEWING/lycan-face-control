@@ -72,38 +72,50 @@ class Camara(threading.Thread):
                 cap = cv2.VideoCapture(self.indice, api)
             except Exception:  # noqa: BLE001
                 continue
-            if not cap or not cap.isOpened():
+            try:
+                if self._preparar(cap, nombre):
+                    return True
+            except Exception:  # noqa: BLE001
+                # MSMF/DirectShow pueden lanzar cv2.error al abrir o al volver de suspensión
+                log.exception("Cámara %d: error al abrir con %s", self.indice, nombre)
+            if self.estado == OCUPADA:
+                return False
+            try:
+                cap.release()
+            except Exception:  # noqa: BLE001
+                pass
+        return False
+
+    def _preparar(self, cap, nombre: str) -> bool:
+        """Ajusta y prueba un VideoCapture recién creado. True = quedó como ``self.cap``."""
+        import cv2
+        if not cap or not cap.isOpened():
+            return False
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.ancho)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.alto)
+        cap.set(cv2.CAP_PROP_FPS, self.fps_pedidos)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if self._entrega(cap, 2.0):
+            fps = self._probar_mjpg(cap)
+            self.fps_al_abrir = fps
+            if 0.0 <= fps < self.FPS_MIN and self._intentos_lentos < self.INTENTOS_LENTA - 1:
+                self._intentos_lentos += 1
+                log.warning("Cámara %d: solo %.1f cuadros/s al abrir; parece compartida u ocupada "
+                            "por otro programa. Se suelta y se reintenta.", self.indice, fps)
                 try:
                     cap.release()
                 except Exception:  # noqa: BLE001
                     pass
-                continue
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.ancho)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.alto)
-            cap.set(cv2.CAP_PROP_FPS, self.fps_pedidos)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            if self._entrega(cap, 2.0):
-                fps = self._probar_mjpg(cap)
-                self.fps_al_abrir = fps
-                if 0.0 <= fps < self.FPS_MIN and self._intentos_lentos < self.INTENTOS_LENTA - 1:
-                    self._intentos_lentos += 1
-                    log.warning("Cámara %d: solo %.1f cuadros/s al abrir; parece compartida u ocupada "
-                                "por otro programa. Se suelta y se reintenta.", self.indice, fps)
-                    try:
-                        cap.release()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    self.estado = OCUPADA
-                    return False
-                if fps < self.FPS_MIN:
-                    log.warning("Cámara %d: sigue lenta (%.1f cuadros/s); se usa igual.", self.indice, fps)
-                self._intentos_lentos = 0
-                self.cap = cap
-                self.backend = nombre
-                log.info("Cámara %d abierta con %s (%dx%d)", self.indice, nombre,
-                         int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-                return True
-            cap.release()
+                self.estado = OCUPADA
+                return False
+            if fps < self.FPS_MIN:
+                log.warning("Cámara %d: sigue lenta (%.1f cuadros/s); se usa igual.", self.indice, fps)
+            self._intentos_lentos = 0
+            self.cap = cap
+            self.backend = nombre
+            log.info("Cámara %d abierta con %s (%dx%d)", self.indice, nombre,
+                     int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            return True
         return False
 
     def _entrega(self, cap, segundos: float) -> bool:
@@ -145,61 +157,81 @@ class Camara(threading.Thread):
             return -1.0      # no se pudo medir: no se descarta la cámara
 
     # ---- bucle ----
-    def run(self):
-        import cv2
-        while not self._parar.is_set():
-            self.estado = ABRIENDO
-            if not self._abrir():
-                if self.estado == OCUPADA:
-                    if self._parar.wait(self.ESPERA_OCUPADA_S):
-                        break
-                    continue
-                self.estado = NO_ABRE if self._n == 0 else PERDIDA
-                if self._parar.wait(2.0):
-                    break
-                continue
-            self.estado = FUNCIONANDO
-            fallos = 0
-            t_fps, n_fps = time.perf_counter(), 0
-            t_lenta = None
-            while not self._parar.is_set():
-                ok, img = self.cap.read()
-                if not ok or img is None:
-                    fallos += 1
-                    if fallos >= 15:
-                        self.estado = PERDIDA
-                        log.warning("La cámara se desconectó. Reintentando…")
-                        if self.al_perder:
-                            try:
-                                self.al_perder()
-                            except Exception:  # noqa: BLE001
-                                pass
-                        break
-                    time.sleep(0.02)
-                    continue
-                fallos = 0
-                if self.espejo:
-                    img = cv2.flip(img, 1)   # espejo: UNA sola vez, aquí
-                t = time.perf_counter()
-                with self._nuevo:
-                    self._n += 1
-                    self._cuadro = Cuadro(img, t, self._n)
-                    self._nuevo.notify_all()
-                n_fps += 1
-                if t - t_fps >= 1.0:
-                    self.fps_reales = n_fps / (t - t_fps)
-                    t_fps, n_fps = t, 0
-                    if self._lenta_hay_que_reabrir(t, t_lenta):
-                        break
-                    t_lenta = (t_lenta or t) if self.fps_reales < self.FPS_MIN else None
+    def _avisar_perdida(self):
+        if self.al_perder:
             try:
-                self.cap.release()
+                self.al_perder()
             except Exception:  # noqa: BLE001
                 pass
-            self.cap = None
-            if not self._parar.is_set():
-                self._parar.wait(2.0)
+
+    def _soltar_cap(self):
+        cap, self.cap = self.cap, None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def run(self):
+        """Nunca muere por un error de OpenCV: cualquier excepción suelta la cámara, la marca
+        PERDIDA, avisa y se reintenta a los 2 s (como con 15 lecturas fallidas)."""
+        while not self._parar.is_set():
+            try:
+                self._vuelta()
+            except Exception:  # noqa: BLE001
+                log.exception("Error en el hilo de la cámara; se suelta y se reintenta")
+                self._soltar_cap()
+                self.estado = PERDIDA
+                self._avisar_perdida()
+                if self._parar.wait(2.0):
+                    break
+        self._soltar_cap()
         self.estado = DETENIDA
+
+    def _vuelta(self):
+        """Abrir, leer hasta perderla, soltar. Una vuelta del bucle de ``run``."""
+        import cv2
+        self.estado = ABRIENDO
+        if not self._abrir():
+            if self.estado == OCUPADA:
+                self._parar.wait(self.ESPERA_OCUPADA_S)
+                return
+            self.estado = NO_ABRE if self._n == 0 else PERDIDA
+            self._parar.wait(2.0)
+            return
+        self.estado = FUNCIONANDO
+        fallos = 0
+        t_fps, n_fps = time.perf_counter(), 0
+        t_lenta = None
+        while not self._parar.is_set():
+            ok, img = self.cap.read()
+            if not ok or img is None:
+                fallos += 1
+                if fallos >= 15:
+                    self.estado = PERDIDA
+                    log.warning("La cámara se desconectó. Reintentando…")
+                    self._avisar_perdida()
+                    break
+                time.sleep(0.02)
+                continue
+            fallos = 0
+            if self.espejo:
+                img = cv2.flip(img, 1)   # espejo: UNA sola vez, aquí
+            t = time.perf_counter()
+            with self._nuevo:
+                self._n += 1
+                self._cuadro = Cuadro(img, t, self._n)
+                self._nuevo.notify_all()
+            n_fps += 1
+            if t - t_fps >= 1.0:
+                self.fps_reales = n_fps / (t - t_fps)
+                t_fps, n_fps = t, 0
+                if self._lenta_hay_que_reabrir(t, t_lenta):
+                    break
+                t_lenta = (t_lenta or t) if self.fps_reales < self.FPS_MIN else None
+        self._soltar_cap()
+        if not self._parar.is_set():
+            self._parar.wait(2.0)
 
     def _lenta_hay_que_reabrir(self, t: float, t_lenta) -> bool:
         """Lenta más de LENTA_S: se suelta y se vuelve a abrir (el otro programa pudo soltarla).
