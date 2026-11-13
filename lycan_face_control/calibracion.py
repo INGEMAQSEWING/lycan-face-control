@@ -92,6 +92,24 @@ def centro(rec: Recolector):
     return statistics.median(ys), statistics.median(ps)
 
 
+def temblor(rec: Recolector):
+    """Paso 2: temblor de la cabeza quieta (desviación por eje de yaw_n y pitch_n), con dos
+    estimaciones robustas (un cuadro raro no la infla): la desviación alrededor de la mediana
+    (1,4826 × mediana de |x − mediana|) y la de las diferencias entre cuadros seguidos (mediana
+    de |Δ| / 0,954, que no cuenta una deriva lenta). Se queda con la mayor: el temblor de
+    FaceMesh no es del todo "blanco" y la segunda sola lo subestima. None si hay pocas muestras."""
+    out = []
+    for campo in ("yaw_n", "pitch_n"):
+        vals = rec.valores(campo)
+        if len(vals) < 10:
+            return None
+        med = statistics.median(vals)
+        mad = 1.4826 * statistics.median([abs(v - med) for v in vals])
+        difs = [abs(b - a) for a, b in zip(vals, vals[1:])]
+        out.append(float(max(mad, statistics.median(difs) / 0.954)))
+    return out
+
+
 def extremo(rec: Recolector, campo: str, c: float, hacia: float, minimo: float):
     """Paso 3: valor del extremo cómodo hacia un lado (percentil 90 del recorrido, no el máximo).
 
@@ -245,7 +263,7 @@ def umbral_gesto(nombre: str, base: dict, maximo: float | None) -> float | None:
 
 
 def construir(c, extremos: dict, base: dict, umbrales: dict | None = None,
-              parpadeos_ms: list | None = None, fecha: str | None = None) -> dict:
+              parpadeos_ms: list | None = None, fecha: str | None = None, temblor_cabeza=None) -> dict:
     """Arma la calibración del perfil (sección 9)."""
     yaw0, pitch0 = c
     cal = {
@@ -260,6 +278,8 @@ def construir(c, extremos: dict, base: dict, umbrales: dict | None = None,
         "parpadeo_natural_max_ms": float(max(parpadeos_ms)) if parpadeos_ms else None,
         "parpadeos_min": len(parpadeos_ms or []),
     }
+    if temblor_cabeza is not None and all(_finito(x) and x >= 0 for x in temblor_cabeza):
+        cal["temblor"] = [float(x) for x in temblor_cabeza]
     return cal
 
 

@@ -54,7 +54,7 @@ FABRICA: dict = {
                     "margen_ms": 150, "anillo_px": 48, "anillo_desde_ms": 200, "sonido": True},
     "gestos": {
         "boca": {"activo": True, "sens": 1.0, "sostener_ms": 600, "corto": "clic", "largo": "pausar"},
-        "cejas": {"activo": True, "sens": 1.0, "sostener_ms": 350, "corto": "clic_der", "largo": "ninguna"},
+        "cejas": {"activo": True, "sens": 1.0, "sostener_ms": 600, "corto": "clic_der", "largo": "ninguna"},
         "sonrisa": {"activo": False, "sens": 1.0, "sostener_ms": 400, "corto": "ninguna", "largo": "ninguna"},
         "parpadeo": {"activo": True, "largo_ms": 800, "descanso_ms": 4000, "doble": False,
                      "cerrado": 0.55, "abierto": 0.70, "fuera_barrido": "ninguna"},

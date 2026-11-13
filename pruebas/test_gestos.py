@@ -231,17 +231,17 @@ def test_refractario_entre_gestos():
     # boca termina a 1,5 s; cejas empiezan a 1,6 s (dentro de los 600 ms): no cuentan
     claves = [(0.0, {}), (1.0, {}), (1.05, {"boca": 1.0}), (1.75, {"boca": 1.0}), (1.8, {}),
               (1.9, {}), (1.95, {"cejas": 1.0}), (2.4, {"cejas": 1.0}), (2.45, {}),
-              (3.0, {}), (3.05, {"cejas": 1.0}), (3.6, {"cejas": 1.0}), (3.65, {}), (4.5, {})]
+              (3.0, {}), (3.05, {"cejas": 1.0}), (3.8, {"cejas": 1.0}), (3.85, {}), (4.7, {})]
     eventos, _, _ = correr(secuencia(claves), cfg)
     assert tipos(eventos) == ["GestoCorto:boca", "GestoCorto:cejas"]
     assert eventos[1][0] > 3.0
 
 
 def test_cejas_arriba_es_clic_derecho_por_defecto():
-    claves = [(0.0, {})] + [(1.0, {}), (1.05, {"cejas": 1.0}), (1.6, {"cejas": 1.0}), (1.65, {})] + [(2.5, {})]
+    claves = [(0.0, {})] + [(1.0, {}), (1.05, {"cejas": 1.0}), (1.8, {"cejas": 1.0}), (1.85, {})] + [(2.5, {})]
     eventos, _, _ = correr(secuencia(claves))
     assert tipos(eventos) == ["GestoCorto:cejas"]
-    assert eventos[0][0] < 1.5              # sin acción larga: no espera a soltar
+    assert eventos[0][0] < 1.75             # sin acción larga: no espera a soltar (600 ms)
 
 
 def test_sonrisa_con_boca_abierta_no_es_sonrisa():

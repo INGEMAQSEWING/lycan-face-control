@@ -28,7 +28,7 @@ from .gestos import (DobleParpadeoLargo, GestoCorto, GestoLargo, Gestos, Parpade
                      ResultadoGestos)
 from .mapeo import MapeoCabeza, Monitor
 from .permanencia import EstadoPermanencia, Permanencia, buscar_objetivo, sobre_ventana_propia
-from .puntero import Puntero
+from .puntero import MEZCLA_DESCONGELAR_S, MEZCLA_REENTRADA_S, Puntero
 
 log = logging.getLogger("lycan")
 
@@ -49,11 +49,21 @@ MOTIVOS_CUIDADOR = ("atajo", "cuidador", "opciones")
 SALTO_IO = 0.25                       # el tamaño de la cara cambia más de 25 %
 SALTO_CENTRO_IO = 0.5                 # o el centro salta más de media distancia entre ojos
 CARA_ESTABLE_S = 1.0                  # tras un salto: 1 s de cara estable antes de aceptar clics
+# Tras un hueco sin cara, la cara que vuelve se compara con la última cara válida (no con el
+# cuadro anterior, que no tenía cara): alguien que se cruza delante de la cámara deja casi
+# siempre uno o varios cuadros sin cara antes de que FaceMesh siga a la otra persona.
+HUECO_CORTO_S = 2.0                   # con un hueco más corto se avisa "otra cara" (como sin hueco)
+# El puntero se desliza solo hasta su posición nueva tras recentrar, cambiar una opción, reanudar
+# o volver la cara: ese deslizamiento no es "moverse a propósito" y no arma la permanencia.
+DESARMAR_TRAS_DESLIZAR_S = MEZCLA_REENTRADA_S + 0.3
 # Tras un clic con un gesto, el puntero (congelado durante el gesto) termina de llegar a donde mira
 # la cabeza: ese acomodo no cuenta como "moverse" para armar la permanencia (si no, se sumaba un
 # clic por permanencia al lado del clic del gesto).
 DESARMAR_TRAS_GESTO_S = 0.8
 
+RADIO_SIGMAS = 4.0                    # radio de la permanencia >= 4 x temblor esperado del puntero
+                                      # (y para armar hay que alejarse >= 6 x temblor)
+REFRACTARIO_FIN_CALIBRACION_S = 1.0
 ESTABLE_PARA_REANUDAR_S = 1.0         # pausa automática: cara estable 1 s para seguir
 RECENTRAR_S = 1.5
 DESPLAZAR_ZONA = 0.15                 # zona muerta del modo Desplazar (fracción del rango cómodo)
@@ -138,7 +148,9 @@ class Maquina:
         self.fatal = False
         self._ultima_vista = Vista()
         self._ultimas_medidas = None
-        self._m_ant = None                        # medidas del cuadro anterior (para "cara distinta")
+        self._m_ult_valida = None                 # última cara válida (para "cara distinta")
+        self._t_ult_valida = None
+        self._io_pausa_auto = None                # tamaño de la cara al entrar en la pausa automática
         self._t_cara_nueva = None                 # tras un salto: desde cuándo la cara está estable
         self._por_cuidador = False
         self._ult_pos_externa = None              # última posición del puntero fuera de ventanas propias
@@ -158,9 +170,25 @@ class Maquina:
             except Exception:  # noqa: BLE001
                 pos = None
         self.mapeo = MapeoCabeza.desde_config(cfg, self.monitor, self.calibracion)
-        self.puntero = Puntero.desde_config(cfg, self.mapeo, pos)
+        self.puntero = Puntero.desde_config(cfg, self.mapeo, pos, self.calibracion)
         self.perm = Permanencia.desde_config(cfg, self.mapeo.monitor.alto)
+        # el círculo de la permanencia nunca es menor que el temblor esperado del puntero (con un
+        # rango calibrado pequeño o mucha velocidad el temblor de FaceMesh se amplifica)
+        self.perm.ajustar_radio_minimo(RADIO_SIGMAS * self.puntero.temblor_px)
         self.gestos = Gestos(cfg["gestos"], self.calibracion)
+        # el clasificador nuevo arranca "recién vuelta la cara": un gesto que ya esté arriba (las
+        # cejas de la prueba final de la calibración, la boca al guardar Opciones) tiene que volver
+        # a reposo antes de contar
+        self.gestos.perder_cara()
+
+    def _desarmar_tras_deslizar(self, t: float | None, extra_s: float = 0.0):
+        """El puntero se va a deslizar solo (mezcla): la permanencia no se arma con eso."""
+        if t is None:
+            return
+        hasta = t + DESARMAR_TRAS_DESLIZAR_S + extra_s
+        if self._desarmar_hasta is None or hasta > self._desarmar_hasta:
+            self._desarmar_hasta = hasta
+        self.perm.desarmar(self.puntero.posicion)
 
     def nueva_config(self, t: float | None, cfg: dict, calibracion: dict | None = None) -> list:
         """Opciones cambiadas o calibración nueva: se rehace todo sin perder el estado."""
@@ -183,6 +211,7 @@ class Maquina:
         self.modo_clic = "izq"
         if t is not None:
             self.puntero.reiniciar_filtros(t)
+            self._desarmar_tras_deslizar(t)
         return acciones
 
     def cambiar_monitor(self, t: float | None, monitor: Monitor) -> list:
@@ -316,11 +345,13 @@ class Maquina:
         acc: list = [SoltarTodo("fin de la calibración")]
         if cfg is not None or calibracion is not None:
             acc += self.nueva_config(t, cfg or self.cfg, calibracion)
+        # refractario de 1 s: el gesto de la última prueba (cejas, boca) no hace un clic real
+        self.gestos.refractario_hasta(t + REFRACTARIO_FIN_CALIBRACION_S)
         if self.estado == K.CALIBRANDO:
             self.estado = self._estado_previo if self._estado_previo in (K.ACTIVO, K.PAUSA) else K.PAUSA
             if self.estado == K.ACTIVO:
                 self.puntero.fijar_posicion(*self._pos_real(), t)
-                self.perm.desarmar(self.puntero.posicion)
+                self._desarmar_tras_deslizar(t)
         return acc
 
     def elegir(self, t: float, ident: str) -> list:
@@ -371,6 +402,10 @@ class Maquina:
         self.motivo_pausa = motivo
         self.pausa_auto = auto
         self._t_cara_desde = None
+        # la pausa automática se quita sola solo con una cara de tamaño parecido a la de la persona
+        self._io_pausa_auto = self._io_valido(self._m_ult_valida) if auto else None
+        # el parpadeo largo que eligió «Pausa» no cuenta como el primero del doble parpadeo
+        self.gestos.olvidar_parpadeo_largo()
         self.perm.reiniciar()
         self._obj_actual = None
         self._bloqueados |= set(IDS_REANUDAR)
@@ -385,8 +420,8 @@ class Maquina:
         self._t_sin_cara = None
         self._soltado_sin_cara = False
         self.puntero.fijar_posicion(*self._pos_real(), t)
-        self.perm.desarmar(self.puntero.posicion)
         self.perm.reiniciar()
+        self._desarmar_tras_deslizar(t)
         self._obj_actual = None
         self._bloqueados |= set(IDS_REANUDAR)
         for n in ("boca", "cejas", "sonrisa"):
@@ -403,6 +438,7 @@ class Maquina:
         dt = 0.05 if self._t_ant is None else min(max(t - self._t_ant, 0.0), 0.5)
         self._t_ant = t
         self._ultimas_medidas = medidas
+        hueco = None if self._t_ult_valida is None else t - self._t_ult_valida
         cambio = self._cara_distinta(medidas, t)
         if cambio:
             self.gestos.perder_cara(t)          # los gestos en curso no son de esta cara
@@ -418,7 +454,10 @@ class Maquina:
             acc.append(SoltarTodo("cara distinta"))
             self._salir_de_submodos_con_boton(acc)
             self.perm.reiniciar()
-            if self.estado != K.PAUSA:
+            # la otra persona no hace clic por permanencia: hay que moverse a propósito después
+            # de la espera (y del deslizamiento del puntero al descongelarse)
+            self._desarmar_tras_deslizar(t, CARA_ESTABLE_S + MEZCLA_DESCONGELAR_S)
+            if self.estado != K.PAUSA and (hueco is None or hueco < HUECO_CORTO_S):
                 acc.append(Aviso("cara_distinta"))
             log.info("Cambió la cara del cuadro: se suelta todo y se espera 1 s de cara estable")
         if self.estado == K.CALIBRANDO:
@@ -430,10 +469,14 @@ class Maquina:
         if self._t_cara_desde is None:
             self._t_cara_desde = t
         if self.estado == K.SIN_CARA:
+            largo = self._soltado_sin_cara
             self.estado = K.ACTIVO
             self._t_sin_cara = None
             self._soltado_sin_cara = False
             self.perm.reiniciar()
+            if largo:
+                # el puntero se desliza desde donde quedó: eso no arma la permanencia
+                self._desarmar_tras_deslizar(t)
             acc.append(Aviso("cara_vuelve"))
         self._t_sin_cara = None
         if not self._centrado and self._recentrar is None:
@@ -449,13 +492,25 @@ class Maquina:
             st = self._en_activo(t, medidas, g, dt, acc)
         return Resultado(acc, self._vista(t, g, st, medidas))
 
+    @staticmethod
+    def _io_valido(m):
+        try:
+            io = float(m.io_px)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        return io if math.isfinite(io) and io > 0 else None
+
     def _cara_distinta(self, m, t: float) -> bool:
-        """Salto brusco de tamaño o de posición de la cara entre dos cuadros seguidos: casi
-        seguro es otra persona (FaceMesh sigue una sola cara). Mientras la cara no esté estable
-        1 s, cada salto nuevo vuelve a empezar la espera."""
-        ant = self._m_ant
-        self._m_ant = m
-        if m is None or ant is None:
+        """Salto brusco de tamaño o de posición de la cara respecto a la **última cara válida**
+        (el cuadro anterior con cara, aunque en medio haya cuadros sin cara): casi seguro es otra
+        persona (FaceMesh sigue una sola cara). Mientras la cara no esté estable 1 s, cada salto
+        nuevo vuelve a empezar la espera."""
+        if m is None:
+            return False                # un cuadro sin cara no borra la referencia
+        ant = self._m_ult_valida
+        self._m_ult_valida = m
+        self._t_ult_valida = t
+        if ant is None:
             return False
         try:
             io0, io1 = float(ant.io_px), float(m.io_px)
@@ -511,6 +566,7 @@ class Maquina:
             self._centrado = True
             self._recentrar = None
             self.puntero.reiniciar_filtros(t)
+            self._desarmar_tras_deslizar(t)     # el deslizamiento al centro nuevo no hace clic
             if not r.get("auto"):
                 acc.append(Aviso("recentrado"))
 
@@ -518,7 +574,11 @@ class Maquina:
     def _en_pausa(self, t: float, m, g: ResultadoGestos, acc: list) -> EstadoPermanencia:
         # el puntero no se mueve, pero se calcula a dónde apunta la cabeza (para "Reanudar")
         pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
-        if self.pausa_auto and self._t_cara_desde is not None \
+        if self.pausa_auto and self._io_pausa_auto is not None:
+            io = self._io_valido(m)
+            if io is None or abs(io - self._io_pausa_auto) / self._io_pausa_auto > SALTO_IO:
+                self._t_cara_desde = t    # otra cara (el cuidador): no reanuda sola
+        if self.pausa_auto and self._t_cara_desde is not None and not self._cara_en_espera(t) \
                 and t - self._t_cara_desde >= ESTABLE_PARA_REANUDAR_S - 1e-9:
             self._reanudar(t, "cara de nuevo", acc)
             return EstadoPermanencia()
@@ -605,6 +665,10 @@ class Maquina:
             return EstadoPermanencia()
         # ---- permanencia ----
         if self.puntero.congelado:
+            self.perm.reiniciar()
+            return EstadoPermanencia()
+        if self.puntero.modo == "joystick" and self.puntero.joystick_moviendo:
+            # el joystick lleva el puntero a velocidad constante (o muy lenta): eso no es "quieto"
             self.perm.reiniciar()
             return EstadoPermanencia()
         if sub == K.ARRASTRANDO:

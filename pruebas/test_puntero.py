@@ -130,7 +130,8 @@ def test_suavidad_mas_alta_es_mas_suave():
         xs = []
         for i in range(150):
             t = i / 30
-            xs.append(p.actualizar(t, Y0 + rng.normal(0, 0.002), P0)[0])
+            p.actualizar(t, Y0 + 0.3 * RY + rng.normal(0, 0.002), P0)
+            xs.append(p.filtrado[0])        # antes de la zona muerta (que crece con el temblor)
         return float(np.std(xs[30:]))
     assert temblor(5) < temblor(1)
 

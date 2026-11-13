@@ -168,6 +168,18 @@ class MapeoCabeza:
         return (self.sens_x * (m.ancho / 2.0) * (1.0 + self.margen),
                 self.sens_y * (m.alto / 2.0) * (1.0 + self.margen))
 
+    def ganancia_uv(self):
+        """Unidades de (u, v) por unidad de pose (el lado más sensible de cada eje)."""
+        f = 1.0 / (1.0 - self.zona_muerta) if self.zona_muerta < 1.0 else 1.0
+        return f / max(min(self.r_der, self.r_izq), 1e-6), f / max(min(self.r_aba, self.r_arr), 1e-6)
+
+    def ganancia_px(self):
+        """Píxeles por unidad de pose (yaw_n, pitch_n), con la sensibilidad: cuánto se amplifica el
+        temblor de la cabeza en la pantalla."""
+        ux, uy = self.ganancia_uv()
+        ex, ey = self.escala_px()
+        return ux * ex, uy * ey
+
     def a_pixeles(self, yaw: float, pitch: float):
         """Posición (sin recortar) del modo absoluto."""
         u, v = self.normalizar(yaw, pitch)

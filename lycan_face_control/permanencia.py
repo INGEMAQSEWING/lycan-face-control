@@ -112,6 +112,24 @@ class Permanencia:
                    alto_pantalla, cfg["barra"]["permanencia_s"])
 
     # ------------------------------------------------------------ control
+    def ajustar_radio_minimo(self, minimo_px: float, factor_armar: float = 1.5):
+        """El radio no baja de ``minimo_px`` (lo fija el temblor esperado del puntero) y la
+        distancia para armar no baja de ``factor_armar`` × ``minimo_px``: el temblor de la cámara
+        ni dispara clics ni los impide. (La distancia para armar no se dobla con el radio: con una
+        ganancia muy alta exigiría moverse media pantalla para el siguiente clic.)"""
+        try:
+            minimo_px = float(minimo_px)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(minimo_px):
+            return
+        if minimo_px > self.radio:
+            self.radio = minimo_px
+        armar = max(self.distancia_activacion, factor_armar * minimo_px)
+        if armar > self.distancia_activacion:
+            self.distancia_activacion = armar
+            self._dist_armar = armar
+
     def desarmar(self, pos, distancia: float | None = None):
         """Exige alejarse ``distancia`` (por defecto 2 × radio) de ``pos`` antes del próximo
         disparo libre."""

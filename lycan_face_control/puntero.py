@@ -10,12 +10,17 @@ Tres modos (``puntero.modo``):
   lo lejos que esté la cabeza del centro (para quien mueve poco el cuello).
 
 En los tres:
-- Filtro One Euro por eje sobre la posición **en altos de pantalla** (no en píxeles): así el
-  ``beta`` no depende de la resolución ni de la ganancia del mapeo, y la derivada del propio
-  temblor de FaceMesh (que en píxeles es enorme) no abre el filtro (ronda 1 de arreglos: con beta
-  en px/s el puntero temblaba 100-130 px con la cabeza quieta y la "Suavidad" no servía).
-- Zona muerta en pantalla (4 px a 1080 de alto, escalada a la resolución): cambios menores no
-  mueven el puntero (quita el temblor fino).
+- Filtro One Euro por eje sobre la **pose de la cabeza** (yaw_n, pitch_n), no sobre los píxeles
+  (ronda 2 de arreglos): así ni ``min_cutoff`` ni ``beta`` dependen de la ganancia del mapeo. Con
+  un rango calibrado pequeño (persona con ELA que mueve poco el cuello) el temblor de FaceMesh ya
+  no abre el filtro.
+- **Temblor esperado en píxeles** (``temblor_px``): el temblor de la cabeza quieta (medido en la
+  calibración, o el de fábrica) × lo que lo atenúa el filtro × la ganancia (px por unidad de
+  pose). La zona muerta en pantalla (4 px a 1080 de alto, escalada) crece hasta
+  ``ZONA_MUERTA_SIGMAS``·temblor_px, y la permanencia usa ese mismo valor para su radio
+  (``estados.py``): el temblor no hace clics fantasma y quedarse quieto a propósito sí hace clic.
+- Joystick: zona muerta propia mucho mayor que el temblor (``JOYSTICK_ZONA_MIN`` o
+  ``JOYSTICK_SIGMAS``·temblor en u) para que la cabeza quieta en el centro no arrastre el puntero.
 - Historial de 0,5 s. ``congelar(t)`` fija el puntero donde estaba ~150 ms antes (los gestos de
   boca, cejas o sonrisa mueven la nariz, y el puntero no debe irse con ellos); al
   ``descongelar`` la posición nueva se mezcla en 300 ms.
@@ -34,8 +39,9 @@ from .mapeo import MapeoCabeza
 
 # Suavidad 1..5 (sección 3.7): más alto = más suave (y un poco más lento)
 SUAVIDAD_MIN_CUTOFF = (2.0, 1.5, 1.0, 0.7, 0.5)
-# beta en "altos de pantalla por segundo" (el filtro trabaja en esa escala)
-SUAVIDAD_BETA = (4.0, 3.0, 2.0, 1.4, 1.0)
+# beta en "unidades de pose por segundo" (el filtro trabaja sobre yaw_n/pitch_n). Equivale al beta
+# que se usaba en altos de pantalla con el rango de fábrica (≈ 11 altos de pantalla por unidad de yaw).
+SUAVIDAD_BETA = (45.0, 34.0, 22.6, 15.8, 11.3)
 D_CUTOFF = 1.0
 # Aceleración 0..3 (0 = apagada): ganancia × (1 + k·v), v en px/s
 ACELERACION_K = (0.0, 0.0005, 0.001, 0.002)
@@ -46,8 +52,39 @@ CONGELAR_ATRAS_S = 0.15
 MEZCLA_DESCONGELAR_S = 0.3
 MEZCLA_REENTRADA_S = 0.5
 DT_MAX = 0.25                   # un hueco más largo entre cuadros no acumula un salto (joystick)
+# Temblor de FaceMesh con la cabeza quieta (desviación por eje, en unidades de pose): medido con la
+# serie real de pruebas/datos (0,002-0,004 a io≈75 px). La calibración guarda el de la persona.
+TEMBLOR_FABRICA = 0.003
+TEMBLOR_MIN, TEMBLOR_MAX = 0.001, 0.02
+DT_TIPICO = 0.05                # 20 cuadros/s (para estimar cuánto atenúa el filtro)
+ZONA_MUERTA_SIGMAS = 1.0        # zona muerta >= 1 x temblor filtrado en px (el radio de la permanencia hace el resto)
+JOYSTICK_ZONA_MIN = 0.12        # zona muerta del joystick (fracción del rango cómodo)
+JOYSTICK_SIGMAS = 5.0           # ...o 5 x el temblor filtrado en u, lo que sea mayor
 
 MODOS = ("absoluto", "relativo", "joystick")
+
+
+def _alfa_filtro(cutoff: float, dt: float) -> float:
+    tau = 1.0 / (2.0 * math.pi * cutoff)
+    return 1.0 / (1.0 + tau / dt)
+
+
+def _temblor(v):
+    """(σ_yaw, σ_pitch) en unidades de pose, dentro de límites razonables."""
+    out = []
+    try:
+        vals = list(v) if v is not None else []
+    except TypeError:
+        vals = []
+    for i in range(2):
+        try:
+            x = float(vals[i])
+        except (IndexError, TypeError, ValueError):
+            x = TEMBLOR_FABRICA
+        if not math.isfinite(x) or x <= 0:
+            x = TEMBLOR_FABRICA
+        out.append(min(max(x, TEMBLOR_MIN), TEMBLOR_MAX))
+    return tuple(out)
 
 
 def zona_muerta_escalada(zona_px: float, alto: int) -> float:
@@ -57,12 +94,12 @@ def zona_muerta_escalada(zona_px: float, alto: int) -> float:
 
 class Puntero:
     def __init__(self, mapeo: MapeoCabeza, modo: str = "absoluto", suavidad: int = 3, zona_muerta_px: float = 4.0,
-                 aceleracion: int = 0, posicion_inicial=None):
+                 aceleracion: int = 0, posicion_inicial=None, temblor=None):
         self.mapeo = mapeo
-        self.escala = float(max(mapeo.monitor.alto, 1))   # px por "alto de pantalla" (para el filtro)
         self.modo = modo if modo in MODOS else "absoluto"
+        self.temblor = _temblor(temblor)
+        self._zona_cfg = zona_muerta_escalada(zona_muerta_px, mapeo.monitor.alto)
         self.poner_suavidad(suavidad)
-        self.zona_muerta = zona_muerta_escalada(zona_muerta_px, mapeo.monitor.alto)
         self.aceleracion = int(min(max(int(aceleracion), 0), len(ACELERACION_K) - 1))
         if posicion_inicial is None:
             posicion_inicial = mapeo.monitor.centro
@@ -81,11 +118,14 @@ class Puntero:
         self.velocidad = 0.0                      # px/s de la salida (para la aceleración)
         self.filtrado = None                      # última posición filtrada (sin recortar)
         self._v_filtrada = 0.0
+        self.joystick_moviendo = False            # joystick fuera de su zona muerta (el puntero avanza)
 
     @classmethod
-    def desde_config(cls, cfg: dict, mapeo: MapeoCabeza, posicion_inicial=None):
+    def desde_config(cls, cfg: dict, mapeo: MapeoCabeza, posicion_inicial=None, calibracion: dict | None = None):
         p = cfg["puntero"]
-        return cls(mapeo, p["modo"], p["suavidad"], p["zona_muerta_px"], p["aceleracion"], posicion_inicial)
+        temblor = calibracion.get("temblor") if isinstance(calibracion, dict) else None
+        return cls(mapeo, p["modo"], p["suavidad"], p["zona_muerta_px"], p["aceleracion"], posicion_inicial,
+                   temblor)
 
     # ------------------------------------------------------------ ajustes
     def poner_suavidad(self, nivel: int):
@@ -93,6 +133,20 @@ class Puntero:
         self.suavidad = i + 1
         self._fx = OneEuro(SUAVIDAD_MIN_CUTOFF[i], SUAVIDAD_BETA[i], D_CUTOFF)
         self._fy = OneEuro(SUAVIDAD_MIN_CUTOFF[i], SUAVIDAD_BETA[i], D_CUTOFF)
+        self._calcular_temblor()
+
+    def _calcular_temblor(self):
+        """Temblor esperado del puntero quieto (px, desviación por eje tras el filtro) y, con él,
+        la zona muerta en pantalla y la del joystick."""
+        a = _alfa_filtro(SUAVIDAD_MIN_CUTOFF[self.suavidad - 1], DT_TIPICO)
+        atenua = math.sqrt(a / (2.0 - a))           # ruido blanco tras un filtro de primer orden
+        gx, gy = self.mapeo.ganancia_px()
+        sx, sy = self.temblor
+        self.temblor_px = max(sx * atenua * gx, sy * atenua * gy)
+        self.zona_muerta = max(self._zona_cfg, ZONA_MUERTA_SIGMAS * self.temblor_px)
+        ux, uy = self.mapeo.ganancia_uv()
+        z = max(JOYSTICK_ZONA_MIN, JOYSTICK_SIGMAS * max(sx * atenua * ux, sy * atenua * uy))
+        self.zona_joystick = min(z, 0.5)
 
     @property
     def posicion(self):
@@ -179,10 +233,9 @@ class Puntero:
         """Un cuadro con cara. Devuelve la posición entera (x, y). ``self.cambio`` = cambió."""
         if self.sin_cara:
             self.recuperar_cara(t)
-        crudo = self.mapeo.a_pixeles(yaw, pitch)
-        e = self.escala
-        fx = self._fx(crudo[0] / e, t) * e
-        fy = self._fy(crudo[1] / e, t) * e
+        fyaw = self._fx(yaw, t)
+        fpitch = self._fy(pitch, t)
+        fx, fy = self.mapeo.a_pixeles(fyaw, fpitch)
         dt = DT_MAX if self._t_ant is None else min(max(t - self._t_ant, 1e-3), DT_MAX)
         # rapidez de la cabeza (posición filtrada, cuadro a cuadro) para la aceleración
         if self.filtrado is not None and self._t_ant is not None:
@@ -250,7 +303,16 @@ class Puntero:
 
     def _paso_joystick(self, fx: float, fy: float, dt: float):
         u, v = self.mapeo.pixeles_a_uv(fx, fy)
-        # la zona muerta del centro ya la quitó el mapeo; la sensibilidad de cada eje es la ganancia
+        # zona muerta propia del joystick (radial, mucho mayor que el temblor): dentro, quieto
+        r = math.hypot(u, v)
+        z = self.zona_joystick
+        if r <= z:
+            self.joystick_moviendo = False
+            return
+        k = (r - z) / (1.0 - z) / r if z < 1.0 else 0.0
+        u, v = u * k, v * k
+        self.joystick_moviendo = True
+        # la sensibilidad de cada eje es la ganancia
         vx, vy = self.mapeo.velocidad_joystick(u, v)
         vx, vy = vx * self.mapeo.sens_x, vy * self.mapeo.sens_y
         rapidez = math.hypot(vx, vy)

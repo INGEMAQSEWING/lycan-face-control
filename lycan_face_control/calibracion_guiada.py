@@ -184,6 +184,7 @@ class Guia:
         if p == "centro":
             c = C.centro(rec)
             self.resultados[p] = c
+            self.resultados["temblor"] = C.temblor(rec)
         elif p in ("izq", "der", "arr", "aba"):
             self.resultados[p] = rec
         elif p == "reposo":
@@ -237,6 +238,7 @@ class Guia:
                 if u is not None:
                     umbrales[g] = u
         durs = self.resultados.get("parpadeo")
-        cal = C.construir(c, extremos, base, umbrales, durs if durs is not None else [])
+        cal = C.construir(c, extremos, base, umbrales, durs if durs is not None else [],
+                          temblor_cabeza=self.resultados.get("temblor"))
         largo = C.parpadeo_largo_ms(durs or [])
         return cal, largo, pocos

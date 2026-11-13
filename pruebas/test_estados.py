@@ -116,7 +116,7 @@ def test_boca_corta_es_clic_y_no_se_suma_la_permanencia():
 def test_cejas_es_clic_derecho():
     s = Sim()
     quieto(s, 0.3)
-    s.quieto(0.6, cejas=0.356 * 1.3)
+    s.quieto(0.8, cejas=0.356 * 1.3)          # 600 ms de fábrica (ronda 2: 350 ms daba clics al sorprenderse)
     quieto(s, 0.3)
     assert s.clics() == [Clic("der")]
 
@@ -320,9 +320,9 @@ def test_modo_de_clic_de_un_solo_uso():
     s.orden("elegir", "barra:doble")
     assert s.maquina.modo_clic == "doble"
     ir(s, 0.3)
-    quieto(s, 1.3)
+    quieto(s, 1.5)
     ir(s, -0.3)
-    quieto(s, 1.3)
+    quieto(s, 1.5)
     assert s.clics() == [Clic("izq", 2), Clic("izq")]
     assert s.maquina.modo_clic == "izq"
 
@@ -333,7 +333,7 @@ def test_modo_de_clic_fijo():
     s.orden("elegir", "barra:derecho")
     for f in (0.3, -0.3):
         ir(s, f)
-        quieto(s, 1.3)
+        quieto(s, 1.5)
     assert s.clics() == [Clic("der"), Clic("der")]
 
 
