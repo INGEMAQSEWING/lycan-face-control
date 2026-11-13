@@ -149,6 +149,11 @@ class VentanaCalibracion:
             tk.Label(self.cuerpo, text=t("cal_poco_movimiento", lados=lados), bg=T.aviso_fondo, fg=T.aviso_texto,
                      font=letra(self.cfg, 16), wraplength=self.W - 300, justify="left", padx=8,
                      pady=4).pack(pady=4)
+        if getattr(self, "no_detectados", None):
+            gestos = ", ".join(t(f"cal_gesto_nombre_{g}") for g in self.no_detectados)
+            tk.Label(self.cuerpo, text=t("cal_gesto_no_detectado", gestos=gestos), bg=T.aviso_fondo,
+                     fg=T.aviso_texto, font=letra(self.cfg, 16), wraplength=self.W - 300, justify="left",
+                     padx=8, pady=4).pack(pady=4)
         self.zona = tk.Frame(self.cuerpo, bg=T.fondo)
         self.zona.pack(fill="both", expand=True)
         self.circulos = {}
@@ -342,6 +347,7 @@ class VentanaCalibracion:
             return
         cal, largo_ms, pocos = res
         self.pocos = pocos
+        self.no_detectados = list(getattr(self.guia, "gestos_no_detectados", []) or [])
         datos = copy.deepcopy(self.cfg)
         perfil = datos.get("perfil_activo") or "Principal"
         datos.setdefault("perfiles", {}).setdefault(perfil, {})["calibracion"] = cal

@@ -21,8 +21,9 @@ def test_fabrica_tiene_lo_necesario():
         assert esperado in textos
     urg = [fr for fr in f.frases(nombres.index("Urgencia")) if fr["urgente"]]
     assert any(fr["texto"].startswith("¡Ayuda") for fr in urg)
-    assert [fr["texto"] for fr in f.rapidas()] == ["Gracias", "Tengo sed", "Tengo dolor", "Cambiarme de posición",
-                                                   "Llamar a {cuidador}"]
+    assert [fr["texto"] for fr in f.rapidas()] == ["¡Ayuda, llamen a alguien!", "Tengo sed", "Tengo dolor",
+                                                   "Cambiarme de posición", "Llamar a {cuidador}"]
+    assert f.rapidas()[0]["urgente"] is True               # la urgencia, en la fila rápida
     validar(FABRICA)                                        # la de fábrica es válida
 
 

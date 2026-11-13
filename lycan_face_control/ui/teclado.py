@@ -28,7 +28,7 @@ import tkinter as tk
 from .. import constantes as K
 from ..barrido import VOLVER, Barrido
 from ..frases import Frases, texto_final
-from ..teclado_logica import (ACCIONES, ACCIONES_TEXTO, N_RAPIDAS, N_SUGERENCIAS, Escritura, buscar_tecla,
+from ..teclado_logica import (ACCIONES, ACCIONES_TEXTO, MAX_TEXTO, N_RAPIDAS, N_SUGERENCIAS, Escritura, buscar_tecla,
                               disposicion, distribucion, nombre_distribucion)
 from .comun import LETRA, BotonGrande, area_de_trabajo, letra, no_activar, tema
 from .textos import t
@@ -37,7 +37,9 @@ log = logging.getLogger("lycan")
 
 PREFIJOS = ("tecla:", "frase:", "sugerencia:", "accion:")
 GRANDE_S = 6.0                 # tiempo que se muestra en grande una frase dicha
-MAX_RETROCESOS = 200           # modo Directo: nunca se mandan más retrocesos que esto de una vez
+# modo Directo: tope de retrocesos de una vez = el largo máximo del texto (así "Limpiar todo" borra
+# allá todo lo que se escribió y el teclado y el programa no quedan desfasados)
+MAX_RETROCESOS = MAX_TEXTO
 FRASES_POR_FILA = 3
 CATEGORIAS_POR_FILA = 6
 MARGEN = 8
@@ -414,8 +416,16 @@ class VentanaTeclado:
             if nombre.startswith("cuerpo:"):
                 filas.append([c.id for c in fila if c.id in activos])
         filas.append([f"accion:{a}" for a in ACCIONES_TEXTO])
-        filas.append([c.id for c in d.fila("acciones") if c.id in activos])
+        # Quien depende del barrido (Opciones: Barrido o Solo comunicación) no puede volver solo si
+        # lo saca del barrido o cierra el teclado: esas dos acciones no entran al barrido (el
+        # cuidador las tiene con el ratón). "Pausa" sí: se quita con dos parpadeos largos.
+        fuera = ("accion:barrido", "accion:cerrar") if self._depende_del_barrido() else ()
+        filas.append([c.id for c in d.fila("acciones") if c.id in activos and c.id not in fuera])
         return [f for f in filas if f]
+
+    def _depende_del_barrido(self) -> bool:
+        tec = self.cfg["teclado"]
+        return bool(tec.get("barrido")) or self.solo_comunicacion
 
     def _preparar_barrido(self, conservar: bool = False):
         if not self.barrido_activo:
@@ -483,7 +493,7 @@ class VentanaTeclado:
         v = getattr(self.app, "ultima_vista", None)
         m = getattr(v, "maquina", None)
         if m is not None:
-            ojos = bool(m.gestos.ojos_cerrando)
+            ojos = bool(m.gestos.ojos_cerrados)
         est = self.barrido.actualizar(_ahora(), ojos, ev)
         self._atender_estado_barrido(est)
         return True
@@ -525,7 +535,7 @@ class VentanaTeclado:
             # en pausa o sin cara el barrido no avanza (el tiempo no cuenta)
             self.barrido._t = ahora
             return
-        est = self.barrido.actualizar(ahora, bool(m.gestos.ojos_cerrando), None)
+        est = self.barrido.actualizar(ahora, bool(m.gestos.ojos_cerrados), None)
         self._atender_estado_barrido(est)
 
     # ------------------------------------------------------------ elegir
@@ -697,7 +707,7 @@ class VentanaTeclado:
             # lo escrito ya está en el otro programa: se empieza un mensaje nuevo sin borrar allá
             if e.texto:
                 self._aprender_ultima()
-                e.poner_texto("")
+                e.nuevo_mensaje()
                 self._pintar_texto()
                 self.mostrar_grande(t("tec_nuevo_mensaje"), 3)
             return

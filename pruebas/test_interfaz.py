@@ -179,6 +179,7 @@ def test_guia_completa_arma_una_calibracion_coherente():
     assert 600 <= largo <= 2000                           # nunca por debajo de 600 tras calibrar
     assert "boca" in cal["umbrales"] and "cejas" not in cal["umbrales"]
     assert pocos == []
+    assert g.gestos_no_detectados == ["cejas"]           # la boca sí; las cejas casi no se movieron
     cfg["perfiles"]["Principal"]["calibracion"] = cal
     assert validar(cfg)["perfiles"]["Principal"]["calibracion"] is not None
 

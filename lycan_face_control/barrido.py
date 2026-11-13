@@ -27,6 +27,7 @@ PAUSA_ELEGIR_S = 0.8
 VUELTAS_FILA = 2
 VUELTAS_FILAS = 3
 RECORDAR_CIERRE_S = 0.5       # tras abrir los ojos, "elegir" usa lo iluminado al cerrarlos
+CONGELAR_MAX_S = 4.0          # un cierre más largo es descanso: el barrido sigue (no se traba)
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class Barrido:
         self._cerrando_antes = False
         self._al_cerrar = None          # (nivel, fila, elemento) al empezar a cerrar los ojos
         self._t_abrio = None
+        self._t_cerro = None            # desde cuándo están cerrados (para el tope)
 
     # ------------------------------------------------------------ armado
     def poner_filas(self, filas: list[list[str]], t: float | None = None, conservar: bool = False):
@@ -167,9 +169,13 @@ class Barrido:
         # congelar al empezar a cerrar los ojos (y recordar lo iluminado)
         if ojos_cerrando and not self._cerrando_antes:
             self._al_cerrar = (self.nivel, self.fila, self.elemento, self._detenido)
+            self._t_cerro = t
         if not ojos_cerrando and self._cerrando_antes:
             self._t_abrio = t
+            self._t_cerro = None
         self._cerrando_antes = ojos_cerrando
+        if ojos_cerrando and self._t_cerro is not None and t - self._t_cerro > CONGELAR_MAX_S:
+            ojos_cerrando = False       # tope: con los ojos cerrados tanto rato el barrido sigue
         en_pausa = self._pausa_hasta is not None and t < self._pausa_hasta
         if self._pausa_hasta is not None and not en_pausa:
             self._pausa_hasta = None

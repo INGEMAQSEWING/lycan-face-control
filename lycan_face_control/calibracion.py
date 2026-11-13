@@ -191,11 +191,40 @@ def parpadeo_largo_ms(duraciones_ms: list) -> int:
     return int(round(min(max(v, PARPADEO_LARGO_MIN_CAL_MS), PARPADEO_LARGO_MAX_MS)))
 
 
+GESTO_MIN_FRACCION_FABRICA = 0.6    # el gesto medido tiene que llegar al 60 % del umbral de fábrica
+
+
+def _senal_gesto(nombre: str, base: dict, maximo):
+    """(referencia, desplazamiento de fábrica, señal máxima) o None."""
+    if maximo is None or not _finito(maximo):
+        return None
+    if nombre == "boca":
+        return base["mar"], BOCA_ENTRA, maximo
+    if nombre == "cejas":
+        return 1.0, CEJAS_ENTRA, maximo / base["cejas"]
+    if nombre == "sonrisa":
+        return 1.0, SONRISA_ENTRA, maximo / base["sonrisa"]
+    return None
+
+
+def gesto_detectado(nombre: str, base: dict, maximo: float | None) -> bool:
+    """¿La persona hizo de verdad el gesto en el paso "Probar"? Si apenas se movió (ruido, o no
+    puede hacerlo, algo común en ELA bulbar), no."""
+    r = _senal_gesto(nombre, base, maximo)
+    if r is None:
+        return False
+    ref, fab, senal = r
+    return (senal - ref) >= fab * GESTO_MIN_FRACCION_FABRICA - 1e-9
+
+
 def umbral_gesto(nombre: str, base: dict, maximo: float | None) -> float | None:
     """Paso 6: umbral de entrada al 50 % entre la base y el máximo medido, sin bajar de la
     mitad del valor de fábrica. Unidades: MAR (boca) o cociente con la base (cejas, sonrisa).
-    None si no se midió nada útil (se queda el de fábrica)."""
+    None si no se midió nada útil o la persona **no hizo el gesto** (se queda el de fábrica:
+    nunca se vuelve más sensible a partir de una medida sin gesto real)."""
     if maximo is None or not _finito(maximo):
+        return None
+    if not gesto_detectado(nombre, base, maximo):
         return None
     if nombre == "boca":
         ref, fab = base["mar"], BOCA_ENTRA

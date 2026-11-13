@@ -43,8 +43,9 @@ FABRICA: dict = {
     "version": VERSION_ARCHIVO,
     "categorias": [
         {"nombre": "Rápidas", "frases": [
-            _f("Gracias"), _f("Tengo sed"), _f("Tengo dolor"), _f("Cambiarme de posición"),
-            _f("Llamar a {cuidador}")]},
+            # la urgencia va en la fila rápida: en barrido queda a pocos segundos (no a más de 40)
+            _f("¡Ayuda, llamen a alguien!", True), _f("Tengo sed"), _f("Tengo dolor"),
+            _f("Cambiarme de posición"), _f("Llamar a {cuidador}")]},
         {"nombre": "Básicas", "frases": [
             _f("Sí"), _f("No"), _f("No sé"), _f("Espere, estoy escribiendo"), _f("Gracias"), _f("Por favor"),
             _f("Otra vez"), _f("Ya está bien")]},

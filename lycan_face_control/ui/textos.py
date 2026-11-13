@@ -199,6 +199,11 @@ TXT: dict[str, str] = {
                   "con el ratón. Nada de esto se graba: solo guardo unos números."),
     "cal_poco_movimiento": ("Casi no detecté movimiento hacia {lados}. Si le cuesta, puede subir la velocidad "
                             "del puntero o usar el modo «palanca» en Opciones."),
+    "cal_gesto_nombre_boca": "abrir la boca",
+    "cal_gesto_nombre_cejas": "levantar las cejas",
+    "cal_gesto_nombre_sonrisa": "sonreír",
+    "cal_gesto_no_detectado": ("Casi no noté el gesto de {gestos}; lo dejé con el ajuste de fábrica. Si a la "
+                               "persona le cuesta hacerlo, el cuidador puede apagarlo en Opciones › Gestos."),
     "cal_final_titulo": "Prueba final",
     "cal_final": "Lleve el puntero con la cabeza a cada círculo y quédese quieto sobre él.",
     "cal_final_resultado": "Alcanzó {n} de {total} círculos.",

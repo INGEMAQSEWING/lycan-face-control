@@ -303,6 +303,16 @@ class Escritura:
         self.espacio_auto = False
         return self._cambiar("")
 
+    def nuevo_mensaje(self):
+        """Modo Directo, botón "Nuevo": lo escrito ya quedó en el otro programa. Se empieza vacío y
+        SIN pasos de deshacer: deshacer no puede volver a mandar el mensaje anterior (quedaría
+        duplicado allá)."""
+        self.texto = ""
+        self.tilde = 0
+        self.mayus = False
+        self.espacio_auto = False
+        self._deshacer.clear()
+
     def poner_texto(self, nuevo: str) -> Cambio:
         self._guardar()
         self.tilde = 0

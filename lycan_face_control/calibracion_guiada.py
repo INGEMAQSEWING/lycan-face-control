@@ -227,9 +227,12 @@ class Guia:
         extremos, pocos = C.rangos(c, recs)
         base = self._base()
         umbrales = {}
+        self.gestos_no_detectados = []
         for g in GESTOS_PROBABLES:
             clave = f"gesto_{g}"
             if clave in self.resultados:
+                if not C.gesto_detectado(g, base, self.resultados[clave]):
+                    self.gestos_no_detectados.append(g)
                 u = C.umbral_gesto(g, base, self.resultados[clave])
                 if u is not None:
                     umbrales[g] = u

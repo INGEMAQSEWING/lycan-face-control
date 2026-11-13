@@ -109,8 +109,14 @@ def test_parpadeos_naturales_y_parpadeo_largo():
 def test_umbral_de_gesto_al_50_por_ciento():
     base = dict(C.BASE_REFERENCIA)
     assert C.umbral_gesto("boca", base, 0.716) == pytest.approx(0.016 + 0.35)
-    # alguien que abre poco: no baja de la mitad del umbral de fábrica
-    assert C.umbral_gesto("boca", base, 0.1) == pytest.approx(0.016 + 0.125)
+    # alguien que abre poco (pero de verdad): no baja de la mitad del umbral de fábrica
+    assert C.umbral_gesto("boca", base, 0.18) == pytest.approx(0.016 + 0.125)
+    # quien NO hizo el gesto (solo ruido): se queda el de fábrica, nunca más sensible
+    assert C.umbral_gesto("boca", base, 0.1) is None
+    assert C.umbral_gesto("boca", {"mar": 0.016}, 0.020) is None
+    assert C.umbral_gesto("cejas", {"cejas": 0.356}, 0.358) is None
+    assert not C.gesto_detectado("cejas", {"cejas": 0.356}, 0.358)
+    assert C.gesto_detectado("boca", base, 0.5)
     assert C.umbral_gesto("cejas", base, 0.356 * 1.3) == pytest.approx(1.15)
     assert C.umbral_gesto("boca", base, 0.01) is None
     assert C.umbral_gesto("boca", base, None) is None
