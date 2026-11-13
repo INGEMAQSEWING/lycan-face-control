@@ -10,7 +10,10 @@ Tres modos (``puntero.modo``):
   lo lejos que esté la cabeza del centro (para quien mueve poco el cuello).
 
 En los tres:
-- Filtro One Euro por eje sobre la posición en píxeles (5 niveles de "Suavidad").
+- Filtro One Euro por eje sobre la posición **en altos de pantalla** (no en píxeles): así el
+  ``beta`` no depende de la resolución ni de la ganancia del mapeo, y la derivada del propio
+  temblor de FaceMesh (que en píxeles es enorme) no abre el filtro (ronda 1 de arreglos: con beta
+  en px/s el puntero temblaba 100-130 px con la cabeza quieta y la "Suavidad" no servía).
 - Zona muerta en pantalla (4 px a 1080 de alto, escalada a la resolución): cambios menores no
   mueven el puntero (quita el temblor fino).
 - Historial de 0,5 s. ``congelar(t)`` fija el puntero donde estaba ~150 ms antes (los gestos de
@@ -31,7 +34,8 @@ from .mapeo import MapeoCabeza
 
 # Suavidad 1..5 (sección 3.7): más alto = más suave (y un poco más lento)
 SUAVIDAD_MIN_CUTOFF = (2.0, 1.5, 1.0, 0.7, 0.5)
-SUAVIDAD_BETA = (0.04, 0.03, 0.02, 0.015, 0.01)
+# beta en "altos de pantalla por segundo" (el filtro trabaja en esa escala)
+SUAVIDAD_BETA = (4.0, 3.0, 2.0, 1.4, 1.0)
 D_CUTOFF = 1.0
 # Aceleración 0..3 (0 = apagada): ganancia × (1 + k·v), v en px/s
 ACELERACION_K = (0.0, 0.0005, 0.001, 0.002)
@@ -55,6 +59,7 @@ class Puntero:
     def __init__(self, mapeo: MapeoCabeza, modo: str = "absoluto", suavidad: int = 3, zona_muerta_px: float = 4.0,
                  aceleracion: int = 0, posicion_inicial=None):
         self.mapeo = mapeo
+        self.escala = float(max(mapeo.monitor.alto, 1))   # px por "alto de pantalla" (para el filtro)
         self.modo = modo if modo in MODOS else "absoluto"
         self.poner_suavidad(suavidad)
         self.zona_muerta = zona_muerta_escalada(zona_muerta_px, mapeo.monitor.alto)
@@ -175,8 +180,9 @@ class Puntero:
         if self.sin_cara:
             self.recuperar_cara(t)
         crudo = self.mapeo.a_pixeles(yaw, pitch)
-        fx = self._fx(crudo[0], t)
-        fy = self._fy(crudo[1], t)
+        e = self.escala
+        fx = self._fx(crudo[0] / e, t) * e
+        fy = self._fy(crudo[1] / e, t) * e
         dt = DT_MAX if self._t_ant is None else min(max(t - self._t_ant, 1e-3), DT_MAX)
         # rapidez de la cabeza (posición filtrada, cuadro a cuadro) para la aceleración
         if self.filtrado is not None and self._t_ant is not None:

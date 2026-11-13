@@ -29,8 +29,9 @@ def disparos(r):
 
 
 def armada(p, t0=0.0):
-    """Mueve 100 px para armar la permanencia (al empezar hay que moverse primero)."""
-    t, _ = correr(p, t0, 0.2, lambda t: (100 + 500 * (t - t0), 100))
+    """Se mueve para armar la permanencia (al empezar hay que moverse primero, y seguir lejos
+    del punto de partida al menos 250 ms)."""
+    t, _ = correr(p, t0, 0.45, lambda t: (100 + 500 * (t - t0), 100))
     return t
 
 
@@ -72,7 +73,7 @@ def test_temblor_dentro_del_radio_si_dispara():
     import math
     p = perm()
     t = armada(p)
-    _, r = correr(p, t, 1.5, lambda tt: (300 + 20 * math.sin(tt * 25), 300 + 20 * math.cos(tt * 17)))
+    _, r = correr(p, t, 1.5, lambda tt: (300 + 20 * math.sin((tt - t + 0.2) * 25), 300 + 20 * math.cos((tt - t + 0.2) * 17)))
     assert len(disparos(r)) == 1
 
 
@@ -191,3 +192,19 @@ def test_marcar_disparo_por_gesto_exige_moverse():
     p.marcar_disparo((300, 300), t)
     _, r = correr(p, t, 3.0, (300, 300))
     assert disparos(r) == []
+
+
+def test_un_pico_suelto_del_temblor_no_arma():
+    """Ronda 1: la cámara tiembla; un salto de un cuadro lejos del disparo no vuelve a armar."""
+    p = perm()
+    t = armada(p)
+    t, r = correr(p, t, 1.5, (300, 300))
+    assert len(disparos(r)) == 1
+    for _ in range(20):                       # 20 picos de un cuadro a 100 px
+        t, r1 = correr(p, t, 1 / FPS, (400, 300))
+        t, r2 = correr(p, t, 1.2, (300, 300))
+        assert disparos(r1 + r2) == []
+    # alejarse de verdad (más de 250 ms) sí arma
+    t, _ = correr(p, t, 0.4, (400, 300))
+    t, r = correr(p, t, 1.5, (400, 300))
+    assert len(disparos(r)) == 1

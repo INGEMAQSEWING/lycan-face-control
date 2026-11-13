@@ -49,13 +49,20 @@ MOTIVOS_CUIDADOR = ("atajo", "cuidador", "opciones")
 SALTO_IO = 0.25                       # el tamaño de la cara cambia más de 25 %
 SALTO_CENTRO_IO = 0.5                 # o el centro salta más de media distancia entre ojos
 CARA_ESTABLE_S = 1.0                  # tras un salto: 1 s de cara estable antes de aceptar clics
+# Tras un clic con un gesto, el puntero (congelado durante el gesto) termina de llegar a donde mira
+# la cabeza: ese acomodo no cuenta como "moverse" para armar la permanencia (si no, se sumaba un
+# clic por permanencia al lado del clic del gesto).
+DESARMAR_TRAS_GESTO_S = 0.8
 
 ESTABLE_PARA_REANUDAR_S = 1.0         # pausa automática: cara estable 1 s para seguir
 RECENTRAR_S = 1.5
 DESPLAZAR_ZONA = 0.15                 # zona muerta del modo Desplazar (fracción del rango cómodo)
 DESPLAZAR_TOPE = 0.8                  # a esta inclinación ya va a la velocidad máxima
 DESPLAZAR_MIN, DESPLAZAR_MAX = 1.0, 8.0   # muescas por segundo
-DESPLAZAR_INACTIVO_S = 10.0
+DESPLAZAR_INACTIVO_S = 10.0          # sin desplazar CLARAMENTE este tiempo, el modo termina solo
+DESPLAZAR_CLARO = 2 * DESPLAZAR_ZONA  # inclinación que cuenta como "sigue desplazando"
+DESPLAZAR_MAX_S = 60.0               # tope de un modo Desplazar continuo
+QUIETO_PX_S = 150.0                   # puntero "casi quieto" (para recordar dónde se trabajaba)
 ERRORES_FATALES = 3                   # errores en 60 s => el motor se detiene (fatal)
 VENTANA_ERRORES_S = 60.0
 
@@ -134,6 +141,10 @@ class Maquina:
         self._m_ant = None                        # medidas del cuadro anterior (para "cara distinta")
         self._t_cara_nueva = None                 # tras un salto: desde cuándo la cara está estable
         self._por_cuidador = False
+        self._ult_pos_externa = None              # última posición del puntero fuera de ventanas propias
+        self._t_desp_inicio = None
+        self._desarmar_hasta = None
+        self._clic_gesto_congelado = False
 
     # ------------------------------------------------------------ armado
     def _construir(self, conservar_pos: bool = False):
@@ -546,6 +557,9 @@ class Maquina:
         if congelar:
             self.puntero.congelar(t)
         else:
+            if self.puntero.congelado and self._clic_gesto_congelado:
+                self._desarmar_hasta = t + DESARMAR_TRAS_GESTO_S
+            self._clic_gesto_congelado = False
             self.puntero.descongelar(t)
         pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
         if self.puntero.cambio and sub not in SUBMODOS_SIN_PUNTERO:
@@ -581,7 +595,11 @@ class Maquina:
         # ---- desplazar ----
         if sub == K.DESPLAZAR:
             self._paso_desplazar(t, dt, acc)
-            return EstadoPermanencia()
+            if self.submodo != K.DESPLAZAR:
+                return EstadoPermanencia()
+            return self._permanencia_terminar(t, acc)
+        if self.puntero.velocidad < QUIETO_PX_S and not sobre_ventana_propia(pos, self.objetivos):
+            self._ult_pos_externa = pos       # donde la persona estaba trabajando (puntero casi quieto)
         if sub in SUBMODOS_SIN_PUNTERO:
             self.perm.reiniciar()
             return EstadoPermanencia()
@@ -603,6 +621,11 @@ class Maquina:
                 tiempo_obj = REANUDAR_PERMANENCIA_S
             else:
                 tiempo_obj = self.cfg["barra"]["permanencia_s"]
+        if self._desarmar_hasta is not None:
+            if t < self._desarmar_hasta:
+                self.perm.desarmar(pos)
+            else:
+                self._desarmar_hasta = None
         st = self.perm.actualizar(pos, t, obj, libre, tiempo_obj)
         if st.disparo:
             if st.objetivo:
@@ -611,6 +634,24 @@ class Maquina:
                 if self._p_cfg.get("sonido", True):
                     self._sonido("clic", acc)
                 self._clic_actual(t, pos, acc, por_permanencia=True)
+        return st
+
+    def _permanencia_terminar(self, t: float, acc: list) -> EstadoPermanencia:
+        """En Desplazar el puntero real queda quieto sobre la página, pero la cabeza sigue
+        apuntando: con ese puntero "virtual" se puede elegir «Terminar» quedándose quieto."""
+        f = self.puntero.filtrado
+        if f is None:
+            return EstadoPermanencia()
+        vpos = self.mapeo.recortar(*f)
+        candidatos = [o for o in self.objetivos if o.id == ID_TERMINAR_DESPLAZAR and o.elegible]
+        obj = buscar_objetivo(vpos, candidatos, self._obj_actual)
+        self._obj_actual = obj
+        if obj is None:
+            self.perm.reiniciar()
+            return EstadoPermanencia()
+        st = self.perm.actualizar(vpos, t, obj, libre=False, tiempo_objetivo_s=self.cfg["barra"]["permanencia_s"])
+        if st.disparo and st.objetivo:
+            self._elegir(st.objetivo, t, self.puntero.posicion, acc)
         return st
 
     def _paso_desplazar(self, t: float, dt: float, acc: list):
@@ -625,7 +666,8 @@ class Maquina:
             rapidez = DESPLAZAR_MIN + (DESPLAZAR_MAX - DESPLAZAR_MIN) * f
             # cabeza abajo (v crece) = bajar la página = rueda negativa
             self._desp_acum += -math.copysign(rapidez * dt, dv)
-            self._t_ult_desp = t
+            if a > DESPLAZAR_CLARO:
+                self._t_ult_desp = t      # descansar apenas inclinado no cuenta como "seguir"
         else:
             self._desp_acum = 0.0
         n = int(self._desp_acum)
@@ -633,6 +675,8 @@ class Maquina:
             self._desp_acum -= n
             acc.append(Rueda(n * K.WHEEL_DELTA))
         if self._t_ult_desp is not None and t - self._t_ult_desp >= DESPLAZAR_INACTIVO_S - 1e-9:
+            self._terminar_desplazar(t, acc)
+        elif self._t_desp_inicio is not None and t - self._t_desp_inicio >= DESPLAZAR_MAX_S - 1e-9:
             self._terminar_desplazar(t, acc)
 
     def _entrar_desplazar(self, t: float, acc: list):
@@ -642,6 +686,16 @@ class Maquina:
         self._desp_ref = None
         self._desp_acum = 0.0
         self._t_ult_desp = t
+        self._t_desp_inicio = t
+        # la rueda va a la ventana que está bajo el puntero: si se eligió desde la barra, el
+        # puntero vuelve a la página donde estaba antes de ir a la barra
+        p = self._ult_pos_externa
+        if p is not None and sobre_ventana_propia(self.puntero.posicion, self.objetivos):
+            self.puntero.fijar_posicion(*p)
+            self.puntero.congelado = False
+            self.puntero.congelar(t)
+            acc.append(Mover(*self.puntero.posicion))
+        self.perm.reiniciar()
         acc.append(Aviso("desplazar"))
 
     def _terminar_desplazar(self, t: float, acc: list):
@@ -650,6 +704,7 @@ class Maquina:
         self.submodo = K.NORMAL
         self._desp_ref = None
         self._desp_acum = 0.0
+        self._t_desp_inicio = None
         self.modo_clic = "izq"
         self.puntero.descongelar(t)
         self.perm.desarmar(self.puntero.posicion)
@@ -716,6 +771,8 @@ class Maquina:
             if accion == "elegir":
                 return
             self._sonido("clic", acc)
+            self._clic_gesto_congelado = self.puntero.congelado
+            self._desarmar_hasta = t + DESARMAR_TRAS_GESTO_S
             if accion == "clic" or sub in (K.ARRASTRE_INICIO, K.ARRASTRANDO):
                 self._clic_actual(t, pos, acc)
             elif accion == "clic_izq":

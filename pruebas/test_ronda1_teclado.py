@@ -36,6 +36,15 @@ def test_nuevo_mensaje_no_deja_pasos_de_deshacer():
     assert e.texto == "" and not e.puede_deshacer()
 
 
+def _esperar(app, condicion, ms=5000):
+    """Gira la interfaz hasta que se cumpla ``condicion()`` (el motor va en su hilo)."""
+    import time
+    fin = time.monotonic() + ms / 1000
+    while time.monotonic() < fin and not condicion():
+        _girar(app, 50)
+    return condicion()
+
+
 @pytest.fixture
 def app_directo(app_tec):  # noqa: F811
     app = app_tec
@@ -50,8 +59,7 @@ def test_directo_nuevo_y_deshacer_no_duplica(app_directo):
     app = app_directo
     for c in "hola":
         _elegir(app, f"tecla:{c}")
-    _girar(app, 300)
-    assert app.salida.texto() == "Hola"
+    assert _esperar(app, lambda: app.salida.texto() == "Hola")
     _elegir(app, "accion:escribir")             # "Nuevo"
     _elegir(app, "accion:deshacer")
     _girar(app, 300)
@@ -63,12 +71,10 @@ def test_directo_limpiar_todo_borra_mas_de_200_caracteres(app_directo):
     app.salida.eventos = list(app.salida.eventos)    # sin recorte: hacen falta todos los eventos
     for _ in range(250):
         _elegir(app, "tecla:a")
-    _girar(app, 600)
-    assert len(app.salida.texto()) == 250
+    assert _esperar(app, lambda: len(app.salida.texto()) == 250)
     _elegir(app, "accion:limpiar")
     _elegir(app, "frase:si")                    # confirmar
-    _girar(app, 1500)
-    assert app.salida.texto() == ""
+    assert _esperar(app, lambda: app.salida.texto() == "")
     assert app.teclado.escritura.texto == ""
 
 

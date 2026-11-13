@@ -7,8 +7,9 @@ Dos maneras de contar:
    - Salirse del círculo reinicia, salvo un **margen** de 150 ms: si vuelve dentro en ese tiempo,
      el contador sigue (estilo OptiKey).
    - **Activación**: tras cada disparo el contador no se arma hasta que el puntero se aleje más de
-     ``2 × radio`` del punto del disparo. Así la persona puede descansar quieta sin que se
-     repitan los clics ("toque de Midas"). Al empezar también hay que moverse primero.
+     ``2 × radio`` del punto del disparo **y siga lejos al menos 250 ms** (un pico suelto del
+     temblor de la cámara no arma). Así la persona puede descansar quieta sin que se repitan los
+     clics ("toque de Midas"). Al empezar también hay que moverse primero.
    - **Recuperación**: 1 s sin disparos tras cada disparo.
 2. **Por objetivo** (botones propios: barra, teclas, frases, "Reanudar"): el contador sigue
    mientras el puntero esté dentro del rectángulo del objetivo ampliado con una franja del 12 %;
@@ -23,6 +24,7 @@ import math
 from dataclasses import dataclass
 
 FRANJA_OBJETIVO = 0.12
+ARMAR_SOSTENIDO_S = 0.25      # hay que estar lejos del último disparo este tiempo seguido para armar
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,7 @@ class Permanencia:
         self._inicio = True               # al empezar también hay que moverse primero
         self._pos_disparo = None          # desde dónde hay que alejarse para armar
         self._dist_armar = self.distancia_activacion
+        self._t_lejos = None              # desde cuándo está lejos del último disparo
         self._t_ultimo_disparo = -1e9
         # por objetivo
         self._obj = None
@@ -115,6 +118,7 @@ class Permanencia:
         self._armado = False
         self._pos_disparo = tuple(pos) if pos is not None else None
         self._dist_armar = self.distancia_activacion if distancia is None else float(distancia)
+        self._t_lejos = None
         self._ancla = None
         self._t_inicio = None
         self._previo = None
@@ -155,10 +159,17 @@ class Permanencia:
                 self._pos_disparo = (x, y)
         # la activación se revisa siempre (también sobre los objetivos)
         if not self._armado:
-            if self._pos_disparo is None or math.hypot(x - self._pos_disparo[0],
-                                                       y - self._pos_disparo[1]) > self._dist_armar:
+            if self._pos_disparo is None:
                 self._armado = True
-                self._pos_disparo = None
+            elif math.hypot(x - self._pos_disparo[0], y - self._pos_disparo[1]) > self._dist_armar:
+                if self._t_lejos is None:
+                    self._t_lejos = t
+                if t - self._t_lejos >= ARMAR_SOSTENIDO_S - 1e-9:
+                    self._armado = True
+                    self._pos_disparo = None
+                    self._t_lejos = None
+            else:
+                self._t_lejos = None
         if objetivo is not None:
             return self._por_objetivo(objetivo, (x, y), t, tiempo_objetivo_s)
         self._obj = None

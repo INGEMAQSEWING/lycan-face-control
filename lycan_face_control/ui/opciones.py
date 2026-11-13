@@ -30,20 +30,29 @@ ACCIONES_GESTO_UI = ("ninguna", "clic", "clic_izq", "clic_der", "doble", "arrast
 
 
 # ------------------------------------------------------------------ velocidad del puntero (1 a 10)
+# Velocidad 1..10 -> sens_x. 3 = fábrica (1,0). Por debajo de 1,0 el puntero ya no llega a los
+# bordes moviendo la cabeza dentro del rango cómodo calibrado (con 0,5 quedaba un tercio de la
+# pantalla fuera de alcance, incluida la barra): 1 y 2 apenas bajan, y siguen llegando a todo.
+SENS_VELOCIDAD = (0.92, 0.96, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75)
+
+
 def sens_de_velocidad(n: int) -> tuple[float, float]:
     """Velocidad 1..10 -> (sens_x, sens_y). 3 = valores de fábrica (1,0 y 1,2)."""
     n = min(max(int(n), VELOCIDAD_MIN), VELOCIDAD_MAX)
-    sx = round(0.5 + (n - 1) * 0.25, 2)            # 0,50 ... 2,75
+    sx = SENS_VELOCIDAD[n - 1]
     sy = round(min(sx * 1.2, 3.0), 2)
     return sx, sy
 
 
 def velocidad_de_sens(sens_x: float) -> int:
     try:
-        n = int(round((float(sens_x) - 0.5) / 0.25)) + 1
+        v = float(sens_x)
     except (TypeError, ValueError):
-        n = 3
-    return min(max(n, VELOCIDAD_MIN), VELOCIDAD_MAX)
+        return 3
+    if v != v:
+        return 3
+    i = min(range(len(SENS_VELOCIDAD)), key=lambda k: abs(SENS_VELOCIDAD[k] - v))
+    return min(max(i + 1, VELOCIDAD_MIN), VELOCIDAD_MAX)
 
 
 # ------------------------------------------------------------------ acceso por ruta
