@@ -13,7 +13,7 @@ import tkinter as tk
 
 from .. import constantes as K
 from .comun import BotonGrande, Globo, area_de_trabajo, dibujar_puntos, letra, poner_icono, tema
-from .textos import icono_estado, subtitulo, t, texto_estado
+from .textos import atajos_kw, icono_estado, subtitulo, t, texto_estado
 
 log = logging.getLogger("lycan")
 
@@ -110,7 +110,7 @@ class VentanaPrincipal:
                                    T, f, icono="❚❚", color=T.ambar)
         self.b_pausa.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=3, pady=3)
         reg.agregar("ui:pausar", self.b_pausa, self.app.pausar)
-        Globo(self.b_pausa, t("globo_pausa"), cfg=self.cfg)
+        Globo(self.b_pausa, t("globo_pausa", **atajos_kw(self.cfg)), cfg=self.cfg)
         defs = (
             ("ui:teclado", "btn_teclado", self.app.alternar_teclado, None, 0, 1),
             ("ui:recentrar", "btn_recentrar", self.app.recentrar, "globo_recentrar", 0, 2),
@@ -283,7 +283,7 @@ class VentanaPrincipal:
         if detenido:
             sub = t("sub_DETENIDO")
         else:
-            sub = subtitulo(vista) if vista is not None else t("sub_PAUSA")
+            sub = subtitulo(vista, self.cfg) if vista is not None else t("sub_PAUSA")
         if self.lbl_sub.cget("text") != sub:
             self.lbl_sub.configure(text=sub)
         if self.mini or vista is None:

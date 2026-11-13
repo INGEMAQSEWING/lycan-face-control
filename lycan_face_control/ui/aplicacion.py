@@ -216,7 +216,8 @@ class App:
         self.guardar_config()
         self.orden("config", self._config_motor())
         self.sonidos.activos = bool(self.cfg.datos["comodidad"].get("sonidos", True))
-        apariencia = any(antes.get(k) != self.cfg.datos.get(k) for k in ("comodidad", "barra"))
+        # los atajos también: el globo de «Pausar» dice el atajo que está puesto
+        apariencia = any(antes.get(k) != self.cfg.datos.get(k) for k in ("comodidad", "barra", "atajos"))
         if apariencia and self.root is not None:
             try:
                 if self.ventana is not None:

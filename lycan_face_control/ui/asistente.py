@@ -9,7 +9,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from .comun import BotonGrande, area_libre, dibujar_cara, letra, no_activar, tema
-from .textos import t
+from .textos import atajos_kw, t
 
 PAGINAS = ("asis_1", "asis_2", "asis_3", "asis_4")
 
@@ -60,7 +60,7 @@ class Asistente:
             c = tk.Canvas(self.cuerpo, width=200, height=200, bg=T.fondo, highlightthickness=0)
             c.pack()
             dibujar_cara(c, 100, 95, 160, T.acento, "sonrisa" if self.i == 0 else "reposo")
-        tk.Label(self.cuerpo, text=t(clave), bg=T.fondo, fg=T.texto, font=letra(cfg, 18), wraplength=self.W - 80,
+        tk.Label(self.cuerpo, text=t(clave, **atajos_kw(cfg)), bg=T.fondo, fg=T.texto, font=letra(cfg, 18), wraplength=self.W - 80,
                  justify="left").pack(pady=6, fill="x")
         tk.Label(self.cuerpo, text=f"{self.i + 1} / {len(PAGINAS)}", bg=T.fondo, fg=T.texto_suave,
                  font=letra(cfg, 16)).pack(side="bottom")

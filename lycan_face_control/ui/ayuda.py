@@ -10,7 +10,7 @@ import tkinter as tk
 
 from ..version import VERSION
 from .comun import BotonGrande, area_libre, dibujar_cara, letra, no_activar, tema
-from .textos import nombre_accion, t
+from .textos import atajos_kw, nombre_accion, pausa_uso, t
 
 SECCIONES = ("gestos", "uso", "cuidador", "problemas", "acerca")
 
@@ -102,7 +102,8 @@ class VentanaAyuda:
             tk.Label(self.cuerpo, text=t("ayuda_honestidad"), bg=T.fondo, fg=T.texto_suave, font=letra(cfg, 16),
                      wraplength=self.W - 60, justify="left", anchor="w").pack(fill="x", pady=(6, 0))
             return
-        texto = t(f"ayuda_{seccion}", version=VERSION)
+        # los atajos y la forma de pausar son los que de verdad están puestos (no los de fábrica)
+        texto = t(f"ayuda_{seccion}", version=VERSION, pausa=pausa_uso(cfg), **atajos_kw(cfg))
         tk.Label(self.cuerpo, text=texto, bg=T.fondo, fg=T.texto, font=letra(cfg, 16), wraplength=self.W - 60,
                  justify="left", anchor="nw").pack(fill="both", expand=True)
 

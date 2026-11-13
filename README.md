@@ -59,9 +59,13 @@ Se abre una bienvenida y luego la **calibración guiada** (unos dos minutos). Ca
 3. **Rango cómodo**: gire la cabeza hasta donde le resulte cómodo, sin forzar el cuello.
 4. **Cara en reposo** y **parpadeo natural**: el programa aprende cómo parpadea usted sin querer,
    para no confundirlo nunca con un clic.
-5. **Gestos** (puede omitir los que no use). Si la persona no logra hacer un gesto, se deja con el ajuste
+5. **Parpadeo largo** (solo con el barrido o "Solo comunicación"): la persona cierra los ojos hasta
+   que la barra se pone verde, tres veces. Si no se logra, la pantalla final lo dice y sugiere qué
+   ajustar. Con "Solo comunicación" no se piden los giros de la cabeza.
+6. **Gestos** (puede omitir los que no use). Si la persona no logra hacer un gesto, se deja con el ajuste
    de fábrica y la pantalla final lo dice: así ese gesto no queda más sensible de la cuenta.
-6. **Prueba final**: elija cuatro círculos con la cabeza.
+7. **Prueba final**: elija cuatro círculos con la cabeza. Con el barrido, la prueba es el parpadeo largo
+   y la ventana se cierra sola.
 
 Se puede repetir cuando quiera desde la ventana principal.
 
@@ -73,10 +77,11 @@ Se puede repetir cuando quiera desde la ventana principal.
 - **Luz** de frente o de lado; evite una ventana detrás de la persona.
 - Calibre de nuevo si cambia la posición de la cama o la silla, o si la persona está cansada.
 - Las **frases rápidas** se editan desde Opciones (puede poner el nombre del cuidador para "Llamar a…").
-- Si la persona tiene movimientos involuntarios: suba la suavidad, el tamaño del círculo y el tiempo
-  de permanencia en Opciones.
-- Si tose o se ríe con la boca abierta, puede hacer clic: suba el tiempo de la boca en Opciones › Gestos
-  o apague ese gesto.
+- Si la persona tiene movimientos involuntarios: suba la suavidad (Opciones › Puntero) y, en
+  Opciones › Clic, «Cuánto se puede mover sin cancelar» y «Tiempo quieto para hacer clic».
+- El programa ya no cuenta como clic la boca abierta con una sacudida de la cabeza (tos, estornudo) ni
+  con los ojos achinados (risa, bostezo). Si aun así hace clics sin querer, suba el tiempo de la boca en
+  Opciones › Gestos o apague ese gesto.
 - Cuando **usted** pausa (con el atajo o con el ratón), abrir la boca no la quita: así un bostezo, la comida
   o el aseo no reactivan el puntero. La quitan el botón "Reanudar" (con la cabeza) y el atajo.
 - Si otra persona se pone frente a la cámara, el programa suelta todo y espera un momento antes de
@@ -87,11 +92,14 @@ Se puede repetir cuando quiera desde la ventana principal.
 En **Opciones › Teclado y voz** ponga **"Solo comunicación"** en Sí. El teclado queda siempre abierto con
 barrido: las filas y luego las teclas se iluminan solas, **un parpadeo largo elige** y, si la persona
 pausa, **dos parpadeos largos seguidos** la quitan. La primera fila trae Sí, No y "¡Ayuda, llamen a
-alguien!" (suena con alerta y a todo volumen). Con el barrido encendido desde Opciones, las acciones
+alguien!" (suena con alerta y a todo volumen, aunque "Decir las frases en voz alta" esté en No).
+Después de "Hablar", la primera letra empieza un mensaje nuevo (Deshacer recupera el anterior); la
+tecla "123" abre los números y signos; los avisos ("No veo su cara", la pausa) salen en una franja
+del propio teclado. Con el barrido encendido desde Opciones, las acciones
 "Salir del barrido" y "Cerrar" no entran al barrido, para que la persona no quede sin forma de volver;
 usted las tiene con el ratón.
 
-### Atajos de teclado (se pueden cambiar en Opciones)
+### Atajos de teclado (se pueden cambiar en Opciones; la Ayuda muestra siempre los que estén puestos)
 
 | Atajo | Hace |
 |---|---|

@@ -9,13 +9,25 @@ Cada paso tiene dos fases:
 
 Los pasos avanzan solos (así la persona no necesita manos). El cuidador puede repetir un paso,
 volver atrás u omitir la prueba de un gesto. No importa tkinter.
+
+Ronda 2 de arreglos: con el **barrido** o «Solo comunicación» encendidos se agrega el paso
+``parpadeo_largo``: la persona practica el cierre voluntario (la barra se llena y se pone verde) y
+el paso termina con 3 parpadeos largos reconocidos por el mismo clasificador que se usa después
+(o, si no los logra en 40 s, sigue con un aviso). Con «Solo comunicación» el puntero no se usa: no
+se piden los cuatro giros de la cabeza (se quedan los rangos de fábrica, sin aviso de "poco
+movimiento").
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
 
+import copy
+
 from . import calibracion as C
+from .config import PARPADEO_LARGO_PISO_MS
+from .gestos import Gestos, ParpadeoLargo
+from .mapeo import RANGO_PITCH_FABRICA, RANGO_YAW_FABRICA
 
 PREPARAR_S = 2.0
 DURACION_S = {
@@ -24,18 +36,35 @@ DURACION_S = {
     "izq": 2.5, "der": 2.5, "arr": 2.5, "aba": 2.5,      # 2 s + 0,5 s que se descartan
     "reposo": 3.0,
     "parpadeo": 15.0,
+    "parpadeo_largo": 40.0,  # tope: si en 40 s no hay 3 parpadeos largos, sigue con un aviso
     "gesto_boca": 6.0, "gesto_cejas": 6.0, "gesto_sonrisa": 6.0,
 }
 POSICION_MAX_S = 20.0        # si en 20 s no se logra buena distancia, se sigue con un aviso
 PASO_MAX_DT = 0.25           # un hueco mayor entre cuadros no cuenta como tiempo medido
 GESTOS_PROBABLES = ("boca", "cejas", "sonrisa")
+PARPADEOS_LARGOS = 3         # cierres voluntarios reconocidos para dar el paso por bueno
+
+
+def usa_barrido(cfg: dict) -> bool:
+    tec = cfg.get("teclado") or {}
+    return bool(tec.get("barrido") or tec.get("solo_comunicacion"))
+
+
+def sin_puntero(cfg: dict) -> bool:
+    return bool((cfg.get("teclado") or {}).get("solo_comunicacion"))
 
 
 def pasos_para(cfg: dict) -> list[str]:
-    """Pasos según la configuración: la prueba de gestos solo para los encendidos."""
-    pasos = ["posicion", "centro", "izq", "der", "arr", "aba", "reposo"]
+    """Pasos según la configuración: la prueba de gestos solo para los encendidos; el parpadeo
+    largo para quien usa el barrido; sin giros de cabeza en «Solo comunicación»."""
+    pasos = ["posicion", "centro"]
+    if not sin_puntero(cfg):
+        pasos += ["izq", "der", "arr", "aba"]
+    pasos.append("reposo")
     if cfg["gestos"]["parpadeo"].get("activo", True):
         pasos.append("parpadeo")
+        if usa_barrido(cfg):
+            pasos.append("parpadeo_largo")
     for g in GESTOS_PROBABLES:
         if cfg["gestos"][g].get("activo"):
             pasos.append(f"gesto_{g}")
@@ -53,6 +82,9 @@ class EstadoGuia:
     posicion: str = ""             # 'bien' | 'lejos' | 'cerca' (paso posición)
     nivel: float | None = None     # señal en vivo del gesto (paso de gesto), relativa a la base
     avisos: list = field(default_factory=list)
+    contador: int = 0              # paso parpadeo_largo: cierres reconocidos
+    parpadeo: float | None = None  # paso parpadeo_largo: 0..1 del cierre en curso
+    parpadeo_listo: bool = False   # ...ya llegó al tiempo (la barra en verde: puede abrir los ojos)
 
 
 class Guia:
@@ -86,6 +118,10 @@ class Guia:
         self._nivel = None
         self._rec = None
         self._t_inicio_medir = None
+        self._g_largo = None
+        self._n_largos = 0
+        self._parpadeo = None
+        self._parpadeo_listo = False
 
     def repetir(self, t: float):
         self.terminado = False
@@ -131,6 +167,8 @@ class Guia:
         self._sin_cara = medidas is None
         if medidas is None:
             self._t_ult = None        # el reloj del paso se detiene
+            if self._g_largo is not None:
+                self._g_largo.actualizar(None, t)
             if self.paso == "posicion":
                 self._t_bien = None
             return self.estado(t)
@@ -153,6 +191,8 @@ class Guia:
                     self.avisos.append("posicion")
                     self._siguiente(t)
             return self.estado(t)
+        if p == "parpadeo_largo":
+            return self._paso_parpadeo_largo(t, medidas, dt)
         # pasos con tiempo: el Recolector usa un tiempo "medido" (sin los huecos sin cara)
         self._medido += dt
         self._rec.agregar(self._rec.t0 + self._medido, medidas)
@@ -165,6 +205,35 @@ class Guia:
 
     def _base(self) -> dict:
         return self.resultados.get("reposo") or dict(C.BASE_REFERENCIA)
+
+    def largo_ms(self) -> int:
+        """Tiempo del parpadeo largo que quedará en la configuración (según los naturales)."""
+        return max(int(C.parpadeo_largo_ms(self.resultados.get("parpadeo") or [])), PARPADEO_LARGO_PISO_MS)
+
+    def _crear_clasificador_largo(self):
+        g = copy.deepcopy(self.cfg["gestos"])
+        g["parpadeo"]["largo_ms"] = self.largo_ms()
+        g["parpadeo"]["doble"] = False
+        g["parpadeo"]["activo"] = True
+        return Gestos(g, {"base": self._base(), "umbrales": {}})
+
+    def _paso_parpadeo_largo(self, t: float, medidas, dt: float) -> EstadoGuia:
+        if self._g_largo is None:
+            self._g_largo = self._crear_clasificador_largo()
+        r = self._g_largo.actualizar(medidas, t)
+        self._n_largos += sum(1 for e in r.eventos if isinstance(e, ParpadeoLargo))
+        self._parpadeo = r.parpadeo_progreso if r.ojos_cerrados else 0.0
+        self._parpadeo_listo = bool(r.parpadeo_listo)
+        self._medido += dt
+        p = "parpadeo_largo"
+        if self._n_largos >= PARPADEOS_LARGOS:
+            self.resultados[p] = self._n_largos
+            self._siguiente(t)
+        elif self._medido >= self.dur[p] - 1e-9:
+            self.resultados[p] = self._n_largos
+            self.avisos.append(p)
+            self._siguiente(t)
+        return self.estado(t)
 
     def _nivel_gesto(self, nombre: str, m) -> float | None:
         b = self._base()
@@ -212,10 +281,13 @@ class Guia:
             prog = min(max((t - self._t_fase) / self.preparar_s, 0.0), 1.0) if self.preparar_s > 0 else 1.0
         elif p == "posicion":
             prog = 0.0 if self._t_bien is None else min((t - self._t_bien) / self.dur["posicion"], 1.0)
+        elif p == "parpadeo_largo":
+            prog = min(self._n_largos / PARPADEOS_LARGOS, 1.0)
         else:
             prog = min(self._medido / self.dur[p], 1.0)
         return EstadoGuia(p, self.i, len(self.pasos), "terminado" if self.terminado else self.fase, prog,
-                          self._sin_cara, self._posicion, self._nivel, list(self.avisos))
+                          self._sin_cara, self._posicion, self._nivel, list(self.avisos),
+                          self._n_largos, self._parpadeo, self._parpadeo_listo)
 
     # ------------------------------------------------------------ resultado
     def resultado(self):
@@ -225,7 +297,16 @@ class Guia:
             return None
         recs = {lado: self.resultados.get(lado) for lado in ("izq", "der", "arr", "aba")}
         recs = {k: v for k, v in recs.items() if v is not None}
-        extremos, pocos = C.rangos(c, recs)
+        if not recs and not any(lado in self.pasos for lado in ("izq", "der", "arr", "aba")):
+            # «Solo comunicación»: no se pidieron los giros; rangos de fábrica, sin aviso
+            extremos = {"der": c[0] + RANGO_YAW_FABRICA, "izq": c[0] - RANGO_YAW_FABRICA,
+                        "aba": c[1] + RANGO_PITCH_FABRICA, "arr": c[1] - RANGO_PITCH_FABRICA}
+            pocos = []
+        else:
+            extremos, pocos = C.rangos(c, recs)
+        n = self.resultados.get("parpadeo_largo")
+        # None = no hubo paso; si no, cuántos parpadeos largos se reconocieron
+        self.parpadeos_largos = n if "parpadeo_largo" in self.pasos else None
         base = self._base()
         umbrales = {}
         self.gestos_no_detectados = []

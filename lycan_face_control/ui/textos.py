@@ -31,6 +31,8 @@ TXT: dict[str, str] = {
     "icono_CALIBRANDO": "◎",
     "icono_DETENIDO": "■",
     "sub_ACTIVO": "Mueva la cabeza para llevar el puntero. Quédese quieto un momento para hacer clic.",
+    "sub_ACTIVO_gestos": "Mueva la cabeza para llevar el puntero. Haga el gesto de clic para hacer clic.",
+    "sub_ACTIVO_sin_clic": "Mueva la cabeza para llevar el puntero. Para hacer clic, elija un gesto en Opciones.",
     "sub_PAUSA": "No muevo el puntero ni hago clic. Para seguir, elija «Reanudar» con la cabeza.",
     "sub_PAUSA_auto": "Pausa porque no veía su cara. Sigo solo cuando vuelva a verla un momento.",
     "sub_PAUSA_parpadeo": "En pausa. Para seguir, cierre los ojos dos veces seguidas, cada vez un momento largo.",
@@ -73,7 +75,7 @@ TXT: dict[str, str] = {
     "btn_omitir": "Omitir",
     "btn_mas_tarde": "Más tarde",
     "pregunta_salir": "¿Seguro que quiere salir? El programa dejará de responder a su cabeza.",
-    "globo_pausa": "Pausar o reanudar. El cuidador también puede usar Ctrl+Alt+Espacio.",
+    "globo_pausa": "Pausar o reanudar. El cuidador también puede usar {pausar}.",
     "globo_recentrar": "Si cambió de posición en la cama o la silla, mire al frente y elija Recentrar.",
     "globo_calibrar": "Repite la calibración guiada (unos dos minutos).",
     "globo_mini": "Deja solo una tira pequeña con el estado y el botón Reanudar.",
@@ -188,6 +190,15 @@ TXT: dict[str, str] = {
     "cal_reposo": "Mire al frente con la cara relajada y la boca cerrada.",
     "cal_parpadeo_titulo": "Parpadeo natural",
     "cal_parpadeo": "Parpadee como siempre, sin pensarlo. Así aprendo a no confundir sus parpadeos con un clic.",
+    "cal_parpadeo_largo_titulo": "Parpadeo largo",
+    "cal_parpadeo_largo": ("Cierre los ojos un momento largo, hasta que la barra se ponga verde, y ábralos. "
+                           "Hágalo tres veces, con calma."),
+    "cal_parpadeo_largo_contador": "Reconocí {n} de {total}.",
+    "cal_parpadeo_largo_no": ("Reconocí {n} de {total} parpadeos largos. Pruebe a cerrar los ojos del todo y un poco "
+                              "más de tiempo. Quien lo cuida puede repetir la calibración o cambiar «Parpadeo "
+                              "largo» en Opciones › Gestos."),
+    "cal_final_barrido_bien": "¡Muy bien! Reconocí sus parpadeos largos. Ya puede usar el teclado con el barrido.",
+    "cal_final_auto": "En unos segundos esta ventana desaparece sola.",
     "cal_gesto_boca_titulo": "Probar: abrir la boca",
     "cal_gesto_boca": "Abra la boca y ciérrela tres veces, despacio.",
     "cal_gesto_cejas_titulo": "Probar: levantar las cejas",
@@ -229,7 +240,7 @@ TXT: dict[str, str] = {
     "asis_2": ("• Ponga la cámara a la altura de los ojos, a 50 o 70 centímetros de la cara.\n"
                "• Que la luz venga de frente. Evite una ventana detrás de la persona.\n"
                "• Si usa gafas con reflejos, incline un poco la pantalla.\n"
-               "• Puede pausar o reanudar en cualquier momento con Ctrl+Alt+Espacio."),
+               "• Puede pausar o reanudar en cualquier momento con {pausar}."),
     "asis_3_titulo": "Cómo se hace clic",
     "asis_3": ("• Quedarse quieto un momento sobre algo hace clic (verá un anillo que se llena).\n"
                "• Abrir la boca un momento también hace clic. Sostenerla abierta dos segundos pausa el programa.\n"
@@ -466,9 +477,9 @@ TXT: dict[str, str] = {
                   "• Clic: quédese quieto un momento (el anillo se llena) o haga el gesto de clic.\n"
                   "• Barra de acciones: elija Doble, Derecho, Arrastrar o Desplazar antes de hacer clic. "
                   "Después vuelve sola al clic normal.\n"
-                  "• Teclado: escriba, hable con la voz del computador o use las frases rápidas.\n"
-                  "• Pausa: sostenga la boca abierta dos segundos y ciérrela. Para reanudar, ábrala unos tres "
-                  "segundos y ciérrela, o quédese quieto sobre «Reanudar». Un bostezo muy largo no cuenta.\n"
+                  "• Teclado: escriba, hable con la voz del computador o use las frases rápidas. «´» pone "
+                  "tilde a la vocal que siga (dos veces: ü); con «123» aparecen los números y signos.\n"
+                  "• {pausa}\n"
                   "• Con barrido o «Solo comunicación»: en pausa, cierre los ojos dos veces seguidas, cada vez "
                   "un momento largo, para seguir.\n"
                   "• Si cambió de posición, elija «Recentrar» mirando al frente."),
@@ -479,8 +490,8 @@ TXT: dict[str, str] = {
                        "• Para sugerir palabras, el teclado guarda en este computador las palabras que la "
                        "persona escribe y cuáles van seguidas (no el orden de lo escrito). Se apaga con "
                        "«Aprender mis palabras» y se borra con «Olvidar las palabras aprendidas».\n"
-                       "• Atajos: Ctrl+Alt+Espacio = pausar o reanudar; Ctrl+Alt+T = teclado; "
-                       "Ctrl+Alt+C = recentrar; Ctrl+Alt+Inicio = mostrar la ventana; Ctrl+Alt+Fin = salir.\n"
+                       "• Atajos: {pausar} = pausar o reanudar; {teclado} = teclado; "
+                       "{recentrar} = recentrar; {ventana} = mostrar la ventana; {salir} = salir.\n"
                        "• Si la persona se cansa: suba la velocidad del puntero para mover menos el cuello, "
                        "o use el barrido del teclado.\n"
                        "• Si la persona solo puede parpadear: en Opciones › Teclado y voz ponga «Solo comunicación» "
@@ -505,6 +516,17 @@ TXT: dict[str, str] = {
                      "Todo funciona sin internet; el video nunca se guarda.\n\n"
                      "Lista de palabras: FrequencyWords (Hermit Dave, a partir de OpenSubtitles), "
                      "licencia CC BY-SA 4.0."),
+    "pausa_con_gesto": ("Pausa: {como}. Para reanudar, sostenga ese gesto unos {reanudar} segundos y suéltelo, o "
+                        "quédese quieto sobre «Reanudar». Un bostezo muy largo no cuenta."),
+    "pausa_sin_gesto": ("Pausa: elija «Pausar» con la cabeza (ningún gesto tiene la pausa; vea la pestaña Gestos). "
+                        "Para reanudar, quédese quieto sobre «Reanudar»."),
+    "pausa_largo_boca": "sostenga la boca abierta dos segundos y ciérrela",
+    "pausa_largo_cejas": "sostenga las cejas arriba dos segundos y bájelas",
+    "pausa_largo_sonrisa": "sostenga la sonrisa dos segundos y relaje la cara",
+    "pausa_corto_boca": "abra la boca un momento",
+    "pausa_corto_cejas": "levante las cejas un momento",
+    "pausa_corto_sonrisa": "sonría un momento",
+    "pausa_o": " o ",
     "ayuda_honestidad": "Si la persona pierde también el control de los párpados, hacen falta otros sistemas.",
 }
 
@@ -520,6 +542,38 @@ def t(clave: str, **kw) -> str:
         except (KeyError, IndexError, ValueError):
             return txt
     return txt
+
+
+ATAJOS_FABRICA = {"pausar": "Ctrl+Alt+Espacio", "teclado": "Ctrl+Alt+T", "recentrar": "Ctrl+Alt+C",
+                  "ventana": "Ctrl+Alt+Inicio", "salir": "Ctrl+Alt+Fin"}
+
+
+def atajos_kw(cfg: dict | None) -> dict:
+    """Los atajos que de verdad están puestos (para que la ayuda nunca diga los de fábrica si el
+    cuidador los cambió)."""
+    a = (cfg or {}).get("atajos") or {}
+    return {k: (a.get(k) or v) for k, v in ATAJOS_FABRICA.items()}
+
+
+def pausa_uso(cfg: dict | None) -> str:
+    """La línea de la pausa de la Ayuda según los gestos que de verdad pausan."""
+    g = (cfg or {}).get("gestos") or {}
+    formas = []
+    for n in ("boca", "cejas", "sonrisa"):
+        d = g.get(n) or {}
+        if not d.get("activo"):
+            continue
+        if d.get("largo") == "pausar":
+            formas.append(TXT[f"pausa_largo_{n}"])
+        elif d.get("corto") == "pausar":
+            formas.append(TXT[f"pausa_corto_{n}"])
+    if not formas:
+        return TXT["pausa_sin_gesto"]
+    try:
+        reanudar = max(int(round(float(g.get("reanudar_ms", 3000)) / 1000.0)), 1)
+    except (TypeError, ValueError):
+        reanudar = 3
+    return TXT["pausa_con_gesto"].format(como=TXT["pausa_o"].join(formas), reanudar=reanudar)
 
 
 def texto_aviso(aviso) -> str:
@@ -540,8 +594,9 @@ def icono_estado(estado: str) -> str:
     return TXT.get(f"icono_{estado}", "●")
 
 
-def subtitulo(vista) -> str:
-    """Frase de ayuda bajo el estado grande, según el estado y el submodo."""
+def subtitulo(vista, cfg: dict | None = None) -> str:
+    """Frase de ayuda bajo el estado grande, según el estado, el submodo y (si se da) la
+    configuración: sin clic por permanencia no se dice "quédese quieto para hacer clic"."""
     if vista is None:
         return ""
     m = getattr(vista, "maquina", vista)
@@ -558,4 +613,9 @@ def subtitulo(vista) -> str:
         return TXT["sub_PAUSA"]
     if m.estado == K.ACTIVO and m.submodo != K.NORMAL:
         return TXT.get(f"sub_{m.submodo}", TXT["sub_ACTIVO"])
+    if m.estado == K.ACTIVO and cfg is not None and not (cfg.get("permanencia") or {}).get("activa", True):
+        g = cfg.get("gestos") or {}
+        clic = any((g.get(n) or {}).get("activo") and "clic" in str((g.get(n) or {}).get("corto", ""))
+                   for n in ("boca", "cejas", "sonrisa"))
+        return TXT["sub_ACTIVO_gestos"] if clic else TXT["sub_ACTIVO_sin_clic"]
     return TXT.get(f"sub_{m.estado}", "")

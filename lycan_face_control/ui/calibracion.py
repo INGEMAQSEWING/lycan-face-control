@@ -10,6 +10,9 @@ que muestra qué hacer, la silueta en vivo y una barra de avance.
   círculos que se eligen con la cabeza (ya con el puntero calibrado). Luego «Terminar» o
   «Repetir la calibración».
 - «Cancelar» devuelve todo como estaba.
+- Con el barrido o «Solo comunicación» (quien solo parpadea): el paso «Parpadeo largo» muestra la
+  barra del cierre (verde = ya puede abrir los ojos) y cuántos se reconocieron; la prueba final no
+  son círculos para la cabeza sino el resultado de ese paso, y la ventana se cierra sola.
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ import logging
 import queue
 import tkinter as tk
 
-from ..calibracion_guiada import Guia
+from ..calibracion_guiada import PARPADEOS_LARGOS, Guia
 from ..config import PARPADEO_LARGO_PISO_MS, validar
 from .comun import BotonGrande, area_libre, boton_ayuda, dibujar_cara, dibujar_puntos, letra, no_activar, tema
 from .textos import t
@@ -28,9 +31,10 @@ log = logging.getLogger("lycan")
 REFRESCO_MS = 50
 DIBUJO = {"posicion": ("reposo", None), "centro": ("reposo", None), "izq": ("mirar", "izq"),
           "der": ("mirar", "der"), "arr": ("mirar", "arr"), "aba": ("mirar", "aba"), "reposo": ("reposo", None),
-          "parpadeo": ("ojos", None), "gesto_boca": ("boca", None), "gesto_cejas": ("cejas", None),
+          "parpadeo": ("ojos", None), "parpadeo_largo": ("ojos", None), "gesto_boca": ("boca", None), "gesto_cejas": ("cejas", None),
           "gesto_sonrisa": ("sonrisa", None)}
 N_OBJETIVOS = 4
+CIERRE_SOLO_MS = 12000          # con barrido: la prueba final se cierra sola (la persona no tiene manos)
 
 
 class VentanaCalibracion:
@@ -154,6 +158,24 @@ class VentanaCalibracion:
             tk.Label(self.cuerpo, text=t("cal_gesto_no_detectado", gestos=gestos), bg=T.aviso_fondo,
                      fg=T.aviso_texto, font=letra(self.cfg, 16), wraplength=self.W - 300, justify="left",
                      padx=8, pady=4).pack(pady=4)
+        n_largos = getattr(self, "parpadeos_largos", None)
+        if n_largos is not None:
+            # quien solo parpadea: la prueba final es el parpadeo largo (no puede ir a círculos)
+            if n_largos >= PARPADEOS_LARGOS:
+                texto, fondo, fg = t("cal_final_barrido_bien"), T.fondo, T.verde
+            else:
+                texto = t("cal_parpadeo_largo_no", n=n_largos, total=PARPADEOS_LARGOS)
+                fondo, fg = T.aviso_fondo, T.aviso_texto
+            self.lbl_final.configure(text=texto, bg=fondo, fg=fg)
+            tk.Label(self.cuerpo, text=t("cal_final_auto"), bg=T.fondo, fg=T.texto_suave,
+                     font=letra(self.cfg, 16), wraplength=self.W - 300).pack(pady=4)
+            fila = tk.Frame(self.cuerpo, bg=T.fondo)
+            fila.pack(side="bottom", pady=8)
+            self._boton(fila, "btn_terminar", "cal:terminar", self.terminar, color=T.verde, side="left", padx=8)
+            self._boton(fila, "cal_repetir_todo", "cal:repetir", self.repetir_todo, side="left", padx=8)
+            self.circulos = {}
+            self._cierre_solo = self.win.after(CIERRE_SOLO_MS, self._cerrar_solo)
+            return
         self.zona = tk.Frame(self.cuerpo, bg=T.fondo)
         self.zona.pack(fill="both", expand=True)
         self.circulos = {}
@@ -206,9 +228,22 @@ class VentanaCalibracion:
         texto = t("cal_final_resultado", n=n, total=N_OBJETIVOS)
         if n >= N_OBJETIVOS:
             texto += " " + t("cal_final_bien")
+        else:
+            texto += " " + t("cal_final_regular")
         self.lbl_final.configure(text=texto)
 
+    def _cerrar_solo(self):
+        if self.fase == "final":
+            self.terminar()
+
     def repetir_todo(self):
+        c = getattr(self, "_cierre_solo", None)
+        if c is not None:
+            try:
+                self.win.after_cancel(c)
+            except (tk.TclError, ValueError):
+                pass
+            self._cierre_solo = None
         self.fase = "intro"
         self.alcanzados = set()
         self.empezar()
@@ -335,6 +370,14 @@ class VentanaCalibracion:
         else:
             c.create_text(self.lado / 2, self.lado / 2, text=t("vista_sin_cara"), fill=T.rojo_texto,
                           font=letra(self.cfg, 16, True))
+        if p == "parpadeo_largo" and est.fase == "medir" and not est.sin_cara:
+            # barra del cierre: se llena mientras tiene los ojos cerrados y se pone verde al llegar
+            h = self.lado - 20
+            frac = min(max(est.parpadeo or 0.0, 0.0), 1.0)
+            color = T.verde if est.parpadeo_listo else T.ambar
+            c.create_rectangle(self.lado - 30, 10 + h * (1 - frac), self.lado - 6, 10 + h, fill=color, outline="")
+            self.lbl_estado.configure(text=t("cal_parpadeo_largo_contador", n=est.contador, total=PARPADEOS_LARGOS),
+                                      fg=T.verde if est.parpadeo_listo else T.ambar)
         if est.nivel is not None:
             # nivel del gesto en vivo: barra vertical a la derecha
             h = self.lado - 20
@@ -356,6 +399,7 @@ class VentanaCalibracion:
         cal, largo_ms, pocos = res
         self.pocos = pocos
         self.no_detectados = list(getattr(self.guia, "gestos_no_detectados", []) or [])
+        self.parpadeos_largos = getattr(self.guia, "parpadeos_largos", None)
         datos = copy.deepcopy(self.cfg)
         perfil = datos.get("perfil_activo") or "Principal"
         datos.setdefault("perfiles", {}).setdefault(perfil, {})["calibracion"] = cal
