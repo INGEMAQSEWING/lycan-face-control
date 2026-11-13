@@ -9,6 +9,10 @@
 - **Respaldo**: si no se puede crear el objeto COM, un proceso ``powershell.exe`` sin ventana que
   carga System.Speech y lee frases por la entrada estándar (una por línea, en UTF-8).
 - Si nada funciona, ``hablar`` devuelve False y la interfaz muestra el texto en grande.
+- ``voz_espanol`` dice si la voz elegida es en español. Si Windows solo tiene voces en otro
+  idioma, se usa la que haya (se entiende algo) y la interfaz avisa una vez y muestra el texto en
+  grande.
+- Largo: hasta 2000 caracteres, igual que el teclado; si hay que cortar, se corta en un espacio.
 
 Nunca se anota en el registro lo que se dice (privacidad).
 """
@@ -36,7 +40,17 @@ CLSID_SPVOICE = "{96749377-3391-11D2-9EE3-00C04F797396}"
 IID_ISPVOICE = "{6C44DF74-72B9-4992-A1EC-EF996E0422D4}"
 CREATE_NO_WINDOW = 0x08000000
 ESPERA_INICIO_S = 2.0
-MAX_TEXTO = 1000
+MAX_TEXTO = 2000           # igual que teclado_logica.MAX_TEXTO
+
+
+def recortar(texto: str, maximo: int = MAX_TEXTO) -> str:
+    """Espacios normalizados y, si pasa de ``maximo``, cortado en el último espacio (no en media
+    palabra)."""
+    limpio = " ".join(str(texto or "").split())
+    if len(limpio) <= maximo:
+        return limpio
+    corte = limpio.rfind(" ", 0, maximo + 1)
+    return limpio[:corte if corte > maximo // 2 else maximo]
 
 
 # --------------------------------------------------------------------------- funciones puras
@@ -158,7 +172,7 @@ def comando_powershell(voz: str | None = None) -> list[str]:
 
 def linea_powershell(texto: str, volumen: int, velocidad: int) -> str:
     """Una orden para el proceso de respaldo: JSON en una sola línea."""
-    limpio = " ".join(str(texto).split())[:MAX_TEXTO]
+    limpio = recortar(texto)
     return json.dumps({"t": limpio, "v": int(volumen), "r": int(velocidad)}, ensure_ascii=False)
 
 
@@ -272,6 +286,7 @@ class Voz:
         self.listo = threading.Event()
         self.motor = None              # "sapi" | "powershell" | None
         self.nombre_voz: str | None = None
+        self.voz_espanol: bool | None = None   # None = todavía no se sabe
         self.ultimo = ""
         self._hilo = None
         if arrancar:
@@ -287,7 +302,7 @@ class Voz:
         self.cola.put(("config",))
 
     def hablar(self, texto: str, urgente: bool = False) -> bool:
-        texto = " ".join(str(texto or "").split())[:MAX_TEXTO]
+        texto = recortar(texto)
         if not texto:
             return True
         if not self.listo.is_set():
@@ -323,6 +338,10 @@ class Voz:
         except Exception:  # noqa: BLE001
             voces = []
         self.nombre_voz = elegir_voz(voces, self.cfg.get("nombre"))
+        idioma = next((v.get("idioma", "") for v in voces if v.get("nombre") == self.nombre_voz), "")
+        self.voz_espanol = bool(self.nombre_voz) and es_espanol(idioma)
+        if not self.voz_espanol:
+            log.warning("No hay voz en español instalada: se usa la predeterminada de Windows")
         try:
             sapi = self._crear_sapi()
             self.motor = "sapi"

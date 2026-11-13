@@ -17,12 +17,12 @@ Lycan Developments / EDWIN CNC — versión 1.0.0 — código abierto (licencia 
 | Para | Cómo |
 |---|---|
 | Mover el puntero | Gire la cabeza a los lados y arriba o abajo, con movimientos cómodos |
-| Hacer clic | Quédese quieto un momento sobre algo (se llena un anillo) **o** abra la boca |
+| Hacer clic | Quédese quieto un momento sobre algo (se llena un anillo) **o** abra la boca un momento (más de medio segundo) |
 | Clic derecho | Levante las cejas |
 | Doble clic, arrastrar, desplazar | Elíjalos con la cabeza en la **barra de acciones** grande |
 | Escribir y hablar | Abra el **Teclado**: teclas grandes en español (ñ, tildes), sugerencias de palabras, frases rápidas ("Sí", "No", "Tengo sed", "Tengo dolor"…) y los botones Hablar, Escribir, Copiar y Borrar |
-| Si solo puede parpadear | Use el **modo barrido**: las filas y las teclas se iluminan solas y un **parpadeo largo** elige |
-| Pausar | Mantenga la boca abierta 2 segundos (para reanudar, 3 segundos), o el botón grande "Reanudar" |
+| Si solo puede parpadear | Use el **modo barrido** (vea *Si la persona solo puede parpadear*, abajo): las filas y las teclas se iluminan solas y un **parpadeo largo** elige |
+| Pausar | Mantenga la boca abierta 2 segundos y ciérrela. Para reanudar, ábrala unos 3 segundos y ciérrela, o quédese quieto sobre el botón grande "Reanudar". Un bostezo muy largo, o con los ojos cerrados, no cuenta |
 
 **Los parpadeos naturales nunca hacen nada.** Solo cuenta un parpadeo largo y voluntario (por fábrica,
 0,8 segundos; la calibración lo ajusta a cada persona). Mientras cierra los ojos, una barra se llena y
@@ -52,14 +52,15 @@ No necesita internet ni tarjeta de video especial.
 
 ## La primera vez
 
-Se abre una bienvenida y luego la **calibración guiada** (unos 2 minutos). Cada paso avanza solo:
+Se abre una bienvenida y luego la **calibración guiada** (unos dos minutos). Cada paso avanza solo:
 
 1. **Posición**: la cara centrada y a buena distancia.
 2. **Centro**: mire de frente y quédese quieto.
 3. **Rango cómodo**: gire la cabeza hasta donde le resulte cómodo, sin forzar el cuello.
 4. **Cara en reposo** y **parpadeo natural**: el programa aprende cómo parpadea usted sin querer,
    para no confundirlo nunca con un clic.
-5. **Gestos** (puede omitir los que no use).
+5. **Gestos** (puede omitir los que no use). Si la persona no logra hacer un gesto, se deja con el ajuste
+   de fábrica y la pantalla final lo dice: así ese gesto no queda más sensible de la cuenta.
 6. **Prueba final**: elija cuatro círculos con la cabeza.
 
 Se puede repetir cuando quiera desde la ventana principal.
@@ -74,6 +75,21 @@ Se puede repetir cuando quiera desde la ventana principal.
 - Las **frases rápidas** se editan desde Opciones (puede poner el nombre del cuidador para "Llamar a…").
 - Si la persona tiene movimientos involuntarios: suba la suavidad, el tamaño del círculo y el tiempo
   de permanencia en Opciones.
+- Si tose o se ríe con la boca abierta, puede hacer clic: suba el tiempo de la boca en Opciones › Gestos
+  o apague ese gesto.
+- Cuando **usted** pausa (con el atajo o con el ratón), abrir la boca no la quita: así un bostezo, la comida
+  o el aseo no reactivan el puntero. La quitan el botón "Reanudar" (con la cabeza) y el atajo.
+- Si otra persona se pone frente a la cámara, el programa suelta todo y espera un momento antes de
+  aceptar clics de esa cara.
+
+### Si la persona solo puede parpadear
+
+En **Opciones › Teclado y voz** ponga **"Solo comunicación"** en Sí. El teclado queda siempre abierto con
+barrido: las filas y luego las teclas se iluminan solas, **un parpadeo largo elige** y, si la persona
+pausa, **dos parpadeos largos seguidos** la quitan. La primera fila trae Sí, No y "¡Ayuda, llamen a
+alguien!" (suena con alerta y a todo volumen). Con el barrido encendido desde Opciones, las acciones
+"Salir del barrido" y "Cerrar" no entran al barrido, para que la persona no quede sin forma de volver;
+usted las tiene con el ratón.
 
 ### Atajos de teclado (se pueden cambiar en Opciones)
 
@@ -82,7 +98,7 @@ Se puede repetir cuando quiera desde la ventana principal.
 | Ctrl+Alt+Espacio | Pausar o reanudar |
 | Ctrl+Alt+T | Abrir o cerrar el teclado |
 | Ctrl+Alt+C | Recentrar (tomar la posición actual como centro) |
-| Ctrl+Alt+Inicio | Mostrar u ocultar la ventana principal |
+| Ctrl+Alt+Inicio | Mostrar la ventana principal |
 | Ctrl+Alt+Fin | Cerrar el programa |
 
 ---
@@ -92,8 +108,12 @@ Se puede repetir cuando quiera desde la ventana principal.
 - La imagen de la cámara **se procesa en el computador y nunca se guarda ni se envía** a ningún lado.
   El programa no usa internet.
 - Por defecto ni siquiera se muestra el video: se ve una silueta de puntos de la cara.
-- Lo que la persona escribe o dice **no se anota** en los registros. Para mejorar las sugerencias solo
-  se guardan palabras sueltas y cuántas veces se usan (se puede apagar en Opciones).
+- Lo que la persona escribe o dice **no se anota** en los registros.
+- Para mejorar las sugerencias, el programa guarda en `palabras_usuario.json` **las palabras que la persona
+  escribe, cuántas veces usó cada una, si la usó hace poco (sí o no) y qué palabras van seguidas** (por
+  ejemplo "tengo sed"). No guarda el orden en que se escribió, pero quien abra la carpeta de datos podría
+  adivinar partes de lo escrito por las palabras que van juntas. Se apaga en Opciones ("Aprender mis
+  palabras") y se borra con "Olvidar las palabras aprendidas".
 - La configuración vive en `%APPDATA%\Lycan Face Control`. Al desinstalar, el programa pregunta si
   borrarla (por defecto la conserva).
 
@@ -107,7 +127,8 @@ Se puede repetir cuando quiera desde la ventana principal.
   sistemas especializados (por ejemplo, seguidores de mirada con cámara infrarroja). Consulte con su
   equipo de salud.
 - Los programas abiertos "como administrador" no reciben clics ni texto de este programa (Windows lo impide).
-- La voz depende de las voces instaladas en Windows. Si no hay voz en español, la frase se muestra en grande.
+- La voz depende de las voces instaladas en Windows. Si no hay voz en español, el programa avisa, usa la
+  voz que haya (puede sonar en otro idioma) y muestra la frase en grande.
 - Los umbrales se probaron con caras dibujadas; la prueba con personas reales está pendiente. Si algo no
   responde bien, la calibración y los ajustes de sensibilidad de Opciones son la primera ayuda.
 

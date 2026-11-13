@@ -426,6 +426,13 @@ class App:
                 log.exception("La voz falló")
         if not ok:
             self.mostrar_aviso(texto, 10)
+        elif getattr(self.voz, "voz_espanol", None) is False:
+            # hay voz, pero no en español: se avisa una vez y el texto se ve en grande siempre
+            if not getattr(self, "_avisado_sin_voz", False):
+                self._avisado_sin_voz = True
+                self.mostrar_aviso(t("aviso_sin_voz"), 10)
+            else:
+                self.mostrar_aviso(texto, 10)
 
     def _crear_voz(self):
         try:

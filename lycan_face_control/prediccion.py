@@ -5,6 +5,10 @@
 - Vocabulario de cuidado (cobija, sábana, flemas, BiPAP...) con prioridad.
 - Palabras de la persona (historial local opcional): aprende al pulsar Espacio, Hablar o
   Escribir y lo guarda en ``palabras_usuario.json`` (máx. 5000 palabras y 10 000 pares).
+  **Privacidad** (ronda 1): el archivo guarda cada palabra con cuántas veces se usó y si se usó
+  hace poco (sí/no), y los pares de palabras seguidas. **No** guarda el orden exacto en que se
+  escribieron (antes un contador permitía rearmar la última frase). Los pares sí dejan ver qué
+  palabras van juntas: el README y la ayuda lo dicen tal cual.
 
 El prefijo se compara sin tildes y en minúsculas (búsqueda binaria en la lista ordenada), así
 "sab" sugiere "sábana". Puntaje:
@@ -33,7 +37,7 @@ MAX_PALABRAS = 5000
 MAX_PARES = 10000
 MAX_LARGO_PALABRA = 30
 RECIENTE_N = 200            # una palabra usada en las últimas 200 cuenta como reciente
-VERSION_ARCHIVO = 1
+VERSION_ARCHIVO = 2          # 2: "reciente" sí/no en vez del orden exacto de uso
 
 VOCABULARIO_CUIDADO = (
     "cobija", "sábana", "almohada", "pañal", "aspirar", "flemas", "saliva", "succión", "oxígeno", "máscara",
@@ -41,8 +45,84 @@ VOCABULARIO_CUIDADO = (
     "silla", "cama", "voltear", "acomodar", "rascar", "picar", "ducha", "peinar", "gafas", "televisor",
     "celular", "ventana", "cortina", "luz",
 )
+# Groserías y palabras ofensivas que trae la lista general (sacada de subtítulos de películas): no
+# se sugieren nunca por sí solas. Si la persona las escribe, se aprenden como suyas y entonces sí
+# aparecen (es su forma de hablar, no la del programa).
+GROSERIAS = frozenset("""
+puta puto putas putos putita putito putitas putitos mierda mierdas marica maricas maricón maricones
+pendejo pendejos pendeja pendejas pendejada culo culos culito verga vergas mamada mamadas coño coños
+joder jodido jodida jodidos jodidas jodidamente jodan jodas joda jode jodió joderme jodiste jodete jódete
+carajo carajos cabrón cabrona cabrones pinche pinches polla pollas zorra zorras perra perras bastardo
+bastarda bastardos follar follando follado cojones cagar cagado cagada cagando cagué caga cagó cago
+teta tetas gilipollas gilipolleces capullo capullos chingar chinga chingada chingado chingón hijueputa
+hijueputas hijoputa malparido malparida malparidos gonorrea
+""".split())
+# Pares en los que la forma sin tilde también es una palabra correcta y común: se dejan las dos.
+TILDE_LEGITIMA = frozenset("""
+si mi tu el se te de mas aun solo que como donde cuando quien quienes cual cuales cuanto cuanta cuantos
+cuantas porque adonde este esta estas estos ese esa esos esas aquel aquella sabana termino practico calculo
+numero limite animo publico ultimo deposito critico continuo transito
+""".split())
+TILDE_FACTOR = 3                # la forma con tilde tiene que ser al menos 3 veces más usada
+
+
+def _plano(p: str) -> str:
+    """Sin tildes, sin diéresis y con la ñ como n (para juntar 'nina' con 'niña')."""
+    return sin_tildes(p).replace("ñ", "n")
+
+
+def _solo_tilde_final(sin: str, con: str) -> bool:
+    """'esta'/'está', 'llego'/'llegó', 'papa'/'papá': la única diferencia es la tilde de la última
+    vocal (casi siempre dos palabras correctas, p. ej. un verbo en presente y en pasado)."""
+    return len(sin) == len(con) and sin[:-1] == con[:-1] and con[-1] in "áéó" and sin[-1] in "aeo"
+
+
+def limpiar_lista(frec: dict) -> dict:
+    """Quita de la lista general las groserías y las formas sin tilde que son faltas de
+    ortografía ('ningun', 'nina', 'verguenza'...). La frecuencia de la forma mal escrita se suma
+    a la correcta."""
+    out = {p: f for p, f in frec.items() if p.lower() not in GROSERIAS}
+    grupos: dict[str, list[str]] = {}
+    for p in out:
+        grupos.setdefault(_plano(p), []).append(p)
+    for clave, formas in grupos.items():
+        if len(formas) < 2:
+            continue
+        sin = [p for p in formas if p == clave]
+        con = [p for p in formas if p != clave]
+        if not sin or not con:
+            continue
+        s = sin[0]
+        if s in TILDE_LEGITIMA:
+            continue
+        mejor = max(con, key=lambda p: out[p])
+        if _solo_tilde_final(s, mejor):
+            continue
+        if out[mejor] >= TILDE_FACTOR * max(out[s], 1):
+            out[mejor] += out.pop(s)
+    return out
+
+
 # para empezar una frase cuando la persona aún no tiene palabras propias
 INICIOS = ("Quiero", "Necesito", "Tengo", "Me", "Estoy")
+
+
+def leer_con_reintentos(ruta: Path) -> str:
+    """Lee un archivo de texto; si otro programa lo tiene bloqueado un momento (antivirus,
+    OneDrive, copia de seguridad) reintenta como la configuración: 3 veces con 0,2 s. Si aun así
+    no se puede, lanza el OSError (el que llama NO debe escribir encima en esa sesión)."""
+    from .config import PAUSA_REINTENTO_S, REINTENTOS_LECTURA
+    ultimo = None
+    for i in range(REINTENTOS_LECTURA):
+        try:
+            return ruta.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise
+        except OSError as e:
+            ultimo = e
+            if i < REINTENTOS_LECTURA - 1:
+                time.sleep(PAUSA_REINTENTO_S)
+    raise ultimo
 
 
 def palabras_de(texto: str) -> list[str]:
@@ -103,10 +183,12 @@ class Prediccion:
         self.ruta = Path(ruta_usuario) if ruta_usuario else None
         self.aprender_activo = bool(aprender)
         self.aviso: str | None = None
+        self.solo_lectura = False          # no se pudo leer el archivo: no se escribe encima
         frec: dict[str, int] = {}
         for p, f in lista:
             if p not in frec or frec[p] < f:
                 frec[p] = f
+        frec = limpiar_lista(frec)
         self.cuidado = {p.lower(): p for p in cuidado}
         mediana = sorted(frec.values())[len(frec) // 2] if frec else 1
         for p in cuidado:
@@ -243,6 +325,7 @@ class Prediccion:
 
     def olvidar(self) -> bool:
         """Borra todo lo aprendido (y el archivo). True si quedó borrado."""
+        self.solo_lectura = False            # la persona pidió borrarlo: ya se puede escribir
         self.usos, self.ultimo, self.pares = {}, {}, {}
         self.contador = 0
         self._cambios = 0
@@ -256,10 +339,16 @@ class Prediccion:
         return True
 
     # ------------------------------------------------------------ archivo
+    def _reciente(self, p: str) -> int:
+        u = self.ultimo.get(p)
+        return 1 if u is not None and self.contador - u < RECIENTE_N else 0
+
     def datos(self) -> dict:
-        return {"version": VERSION_ARCHIVO, "contador": self.contador,
-                "palabras": {p: [self.usos[p], self.ultimo.get(p, 0)] for p in self.usos},
-                "pares": dict(self.pares)}
+        """Lo que se guarda: por palabra [usos, reciente 0/1] (sin el orden en que se escribió) y
+        los pares. Las palabras van ordenadas alfabéticamente."""
+        return {"version": VERSION_ARCHIVO,
+                "palabras": {p: [self.usos[p], self._reciente(p)] for p in sorted(self.usos)},
+                "pares": {k: self.pares[k] for k in sorted(self.pares)}}
 
     def cargar_usuario(self):
         """Lee ``palabras_usuario.json``. Si está dañado se aparta con otro nombre y se empieza
@@ -268,38 +357,56 @@ class Prediccion:
         if r is None or not r.exists():
             return
         try:
-            crudo = json.loads(r.read_text(encoding="utf-8"))
+            crudo = json.loads(leer_con_reintentos(r))
             if not isinstance(crudo, dict) or not isinstance(crudo.get("palabras", {}), dict) \
                     or not isinstance(crudo.get("pares", {}), dict):
                 raise ValueError("estructura equivocada")
             usos, ultimo, pares = {}, {}, {}
+            version = crudo.get("version", 1)
+            c_viejo = crudo.get("contador", 0)
+            c_viejo = c_viejo if isinstance(c_viejo, int) and not isinstance(c_viejo, bool) else 0
             for p, v in crudo.get("palabras", {}).items():
                 if not isinstance(p, str) or not p or len(p) > MAX_LARGO_PALABRA or not all(c.isalpha() for c in p):
                     continue
                 if isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) and not isinstance(x, bool)
                                                               and x >= 0 for x in v):
-                    usos[p], ultimo[p] = v[0], v[1]
+                    usos[p] = v[0]
+                    if version == 1:
+                        reciente = c_viejo - v[1] < RECIENTE_N      # archivo viejo: orden exacto
+                    else:
+                        reciente = v[1] >= 1
+                    if reciente:
+                        ultimo[p] = 0
                 elif isinstance(v, int) and not isinstance(v, bool) and v >= 0:
                     usos[p] = v
             for k, v in crudo.get("pares", {}).items():
                 if isinstance(k, str) and k.count(" ") == 1 and isinstance(v, int) and not isinstance(v, bool) \
                         and v > 0 and len(k) <= 2 * MAX_LARGO_PALABRA + 1:
                     pares[k] = v
-            c = crudo.get("contador", 0)
-            self.contador = c if isinstance(c, int) and not isinstance(c, bool) and c >= 0 else 0
-            self.contador = max(self.contador, max(ultimo.values(), default=0))
+            # las "recientes" quedan todas en 0 y el contador empieza en 0: se van enfriando
+            # mientras se escribe, sin saber en qué orden se usaron
+            self.contador = 0
             self.usos, self.ultimo, self.pares = usos, ultimo, pares
             self._recortar()
+            if version == 1:
+                self._cambios += 1          # se reescribe pronto en el formato sin orden
         except (ValueError, UnicodeDecodeError, RecursionError, MemoryError, TypeError, AttributeError) as e:
             log.warning("Archivo de palabras aprendidas dañado (%s); se empieza de cero.", type(e).__name__)
             self.aviso = "palabras_danadas"
             _apartar(r)
+        except FileNotFoundError:
+            pass
         except OSError as e:
-            log.warning("No se pudo leer el archivo de palabras aprendidas: %s", e)
+            log.warning("No se pudo leer el archivo de palabras aprendidas (%s): en esta sesión no se "
+                        "escribe encima.", e)
+            self.solo_lectura = True
+            self.aviso = "palabras_no_leidas"
 
     def guardar(self, forzar: bool = False) -> bool:
         if self.ruta is None or (not forzar and self._cambios == 0):
             return True
+        if self.solo_lectura:
+            return False                    # el archivo bueno sigue allá: no se pisa
         if not self.aprender_activo and not self.usos:
             return True
         try:

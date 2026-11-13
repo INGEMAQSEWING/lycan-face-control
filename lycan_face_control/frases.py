@@ -23,7 +23,7 @@ import logging
 import re
 from pathlib import Path
 
-from .prediccion import _apartar, escribir_json
+from .prediccion import _apartar, escribir_json, leer_con_reintentos
 
 log = logging.getLogger("lycan")
 
@@ -139,6 +139,7 @@ class Frases:
         self.datos: dict = copy.deepcopy(FABRICA)
         self.aviso: str | None = None
         self.problemas: list[str] = []
+        self.solo_lectura = False          # no se pudo leer el archivo: no se escribe encima
 
     # ------------------------------------------------------------ archivo
     def cargar(self) -> dict:
@@ -149,16 +150,21 @@ class Frases:
             self.datos = copy.deepcopy(FABRICA)
             return self.datos
         try:
-            crudo = json.loads(r.read_text(encoding="utf-8"))
+            crudo = json.loads(leer_con_reintentos(r))
             self.datos = validar(crudo, self.problemas)
+            self.solo_lectura = False
         except (ValueError, UnicodeDecodeError, RecursionError, MemoryError, TypeError) as e:
             log.warning("Frases dañadas (%s); se usan las de fábrica.", type(e).__name__)
             self.aviso = "frases_danadas"
             _apartar(r)
             self.datos = copy.deepcopy(FABRICA)
-        except OSError as e:
-            log.warning("No se pudieron leer las frases: %s", e)
+        except FileNotFoundError:
             self.datos = copy.deepcopy(FABRICA)
+        except OSError as e:
+            log.warning("No se pudieron leer las frases (%s): en esta sesión no se escribe encima.", e)
+            self.datos = copy.deepcopy(FABRICA)
+            self.solo_lectura = True
+            self.aviso = "frases_no_leidas"
         for p in self.problemas:
             log.warning("Frases: %s (se descartó)", p)
         return self.datos
@@ -166,6 +172,9 @@ class Frases:
     def guardar(self) -> bool:
         if self.ruta is None:
             return True
+        if self.solo_lectura:
+            log.warning("Las frases no se guardan: al abrir no se pudo leer el archivo")
+            return False
         try:
             self.datos = validar(self.datos)
             escribir_json(self.ruta, self.datos)

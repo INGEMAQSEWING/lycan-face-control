@@ -147,7 +147,8 @@ TXT: dict[str, str] = {
     "aviso_no_camara": "No encuentro la cámara. Revise que esté conectada y que otro programa no la esté usando.",
     "aviso_camara_ocupada": "Otro programa está usando la cámara. Ciérrelo para que yo pueda verla.",
     "aviso_teclado_no_disponible": "El teclado en pantalla no está disponible en esta versión.",
-    "aviso_sin_voz": "No encontré una voz en español en Windows; muestro el texto en grande.",
+    "aviso_sin_voz": ("No encontré una voz en español en Windows: uso la que hay, aunque suene en otro "
+                      "idioma, y muestro el texto en grande."),
     "aviso_descanso": "Lleva un buen rato usando el computador. Si quiere, descanse el cuello un momento.",
     "aviso_atajos": "Algunos atajos del cuidador no se pudieron usar:",
     "aviso_no_guardo": "No pude guardar los cambios. Revise que la carpeta de datos no esté protegida.",
@@ -405,6 +406,10 @@ TXT: dict[str, str] = {
                   "voz alta y «Escribir» lo envía al programa que estaba usando."),
     "aviso_frases_danadas": "Las frases rápidas estaban dañadas; volví a las de fábrica.",
     "aviso_palabras_danadas": "El archivo de palabras aprendidas estaba dañado; empecé uno nuevo.",
+    "aviso_frases_no_leidas": ("No pude leer sus frases (otro programa tenía el archivo abierto); uso las de "
+                               "fábrica y no guardo cambios para no borrar las suyas. Cierre y vuelva a abrir."),
+    "aviso_palabras_no_leidas": ("No pude leer sus palabras aprendidas (otro programa tenía el archivo "
+                                 "abierto); no guardo nada nuevo para no borrarlas. Cierre y vuelva a abrir."),
 
     # ---- editor de frases (para el cuidador) ----
     "ed_titulo": "Frases rápidas",
@@ -461,6 +466,9 @@ TXT: dict[str, str] = {
                        "• Cámara a la altura de los ojos, a 50 o 70 cm; luz de frente, sin ventana detrás.\n"
                        "• Calibre la primera vez y cuando cambie mucho la postura.\n"
                        "• Las frases rápidas se editan en Opciones › Teclado y voz.\n"
+                       "• Para sugerir palabras, el teclado guarda en este computador las palabras que la "
+                       "persona escribe y cuáles van seguidas (no el orden de lo escrito). Se apaga con "
+                       "«Aprender mis palabras» y se borra con «Olvidar las palabras aprendidas».\n"
                        "• Atajos: Ctrl+Alt+Espacio = pausar o reanudar; Ctrl+Alt+T = teclado; "
                        "Ctrl+Alt+C = recentrar; Ctrl+Alt+Inicio = mostrar la ventana; Ctrl+Alt+Fin = salir.\n"
                        "• Si la persona se cansa: suba la velocidad del puntero para mover menos el cuello, "
