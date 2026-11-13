@@ -102,7 +102,7 @@ RANGOS = {
 MINIMO_SI_NO_CERO = {"comodidad.descanso_min": 10}
 
 OPCIONES = {
-    "puntero.modo": ("absoluto", "joystick"),
+    "puntero.modo": ("absoluto", "relativo", "joystick"),
     "barra.posicion": ("derecha", "izquierda", "arriba", "abajo"),
     "teclado.distribucion": ("auto", "qwerty", "frecuencia"),
     "teclado.modo_escritura": ("mensaje", "directo"),
