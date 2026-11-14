@@ -148,9 +148,14 @@ def test_ajuste_vertical_raro_usa_el_de_fabrica_y_niveles_fuera_se_recortan():
 
 
 def test_formato_del_ajuste_vertical():
-    assert OP._ajuste_vertical(1.0) == "Igual que a los lados"
-    assert OP._ajuste_vertical(1.2) == "120 % de la de los lados"
-    assert OP._ajuste_vertical(0.8) == "80 % de la de los lados"
+    # revisión de la 1.1: valor corto (la explicación va en la ayuda de la fila)
+    assert OP._ajuste_vertical(1.0) == "Igual"
+    assert OP._ajuste_vertical(1.2) == "120 %"
+    assert OP._ajuste_vertical(0.8) == "80 %"
+    # el porcentaje que se muestra es el que de verdad queda
+    assert OP.ajuste_efectivo({"sens_x": 1.0, "sens_y": 0.92}, 0.8) == 0.92
+    assert OP.ajuste_efectivo({"sens_x": 2.75, "sens_y": 3.3}, 2.0) == 1.2
+    assert OP.ajuste_efectivo({}, 1.5) == 1.5
     assert OP._aumento(3) == "3 veces"
 
 

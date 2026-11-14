@@ -1,7 +1,7 @@
 ﻿; Instalador de Lycan Face Control (modelo: el de su programa hermano, Lycan M. Control).
 ;
 ; En la nube: .github\workflows\windows.yml
-; A mano:     iscc /DMyAppVersion=1.0.0 empaquetado\lycan-face-control.iss
+; A mano:     iscc /DMyAppVersion=1.1.0 empaquetado\lycan-face-control.iss
 ;             (sin /DMyAppVersion compila igual como version 0.0.0)
 ;
 ; El AppId es FIJO: no cambiarlo nunca, o Windows toma cada version como otro programa.

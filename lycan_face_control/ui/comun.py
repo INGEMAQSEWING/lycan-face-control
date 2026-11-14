@@ -37,6 +37,9 @@ class Tema:
     aviso_fondo: str
     aviso_texto: str
     alto_contraste: bool = False
+    # 1.1 (revisión): el rojo de los botones AYUDA, propio en los dos temas (en alto contraste el
+    # «rojo» de los demás es amarillo y AYUDA se confundía con «Reanudar»); texto negro, 7,6:1
+    emergencia: str = "#ff6b6b"
 
     def color_estado(self, estado: str) -> str:
         return {K.ACTIVO: self.verde, K.PAUSA: self.ambar, K.SIN_CARA: self.rojo,

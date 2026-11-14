@@ -394,7 +394,16 @@ class Maquina:
                 self.calibracion = cal
                 self._centrado = True
         yaw0_pitch0 = (self.mapeo.yaw0, self.mapeo.pitch0)
+        # 1.1 (revisión): el «Recentrar» de los ojos (desplazamiento de la mirada) no se pierde al
+        # tocar una opción; con una calibración nueva o en otro monitor sí se empieza de cero
+        recentrado = None
+        mir = getattr(self.puntero, "_mirada", None)
+        if mir is not None and calibracion is None:
+            recentrado = (tuple(mir.modelo.desplazamiento), tuple(self.mapeo.monitor.rect))
         self._construir(conservar_pos=True)
+        mir = getattr(self.puntero, "_mirada", None)
+        if recentrado is not None and mir is not None and tuple(self.mapeo.monitor.rect) == recentrado[1]:
+            mir.modelo.desplazamiento = recentrado[0]
         if self.calibracion is None:
             self.mapeo.recentrar(*yaw0_pitch0)   # conserva el centro tomado sin calibrar
         if self.submodo in (K.ARRASTRE_INICIO, K.ARRASTRANDO, K.DESPLAZAR):

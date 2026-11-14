@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 
-ROJO_CLARO = "#c00000"
+ROJO_CLARO = "#b00000"      # revisión de la 1.1: con #c00000 el blanco daba 6,5:1; así 7,4:1
 ROJO_OSCURO = "#5a0000"
 CAMBIO_COLOR_S = 1.0          # un cambio de color por segundo (WCAG 2.3.1: menos de 3 destellos/s)
 VOZ_POR_LETRA_S = 0.08        # duración estimada de la voz: 0,08 s por letra + 1 s

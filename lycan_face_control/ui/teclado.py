@@ -137,10 +137,14 @@ class VentanaTeclado:
         self._resaltados = set()
 
     def _geometria(self):
-        """(x, y, ancho, alto_max) del teclado: todo el ancho libre (sin la barra) y abajo o arriba."""
+        """(x, y, ancho, alto_max) del teclado: todo el ancho libre (sin la barra) y abajo o arriba.
+        1.1 (revisión): con la barra minimizada se aparta de su pestaña (si no, el teclado la tapaba
+        y sus botones, AYUDA incluido, seguían activos debajo de las teclas)."""
         l, a, d, ab = area_de_trabajo(self.root)
         barra = getattr(self.app, "barra", None)
         win = getattr(barra, "win", None)
+        if getattr(barra, "minimizada", False):
+            win = getattr(barra, "pestana", None)
         try:
             if win is not None and win.winfo_exists() and win.winfo_viewable():
                 pos = self.cfg["barra"].get("posicion", "derecha")
@@ -272,7 +276,7 @@ class VentanaTeclado:
         reg = self.app.registro
         b = BotonGrande(self.win, t("tec_emergencia"), reg.comando(K.ID_EMERGENCIA_TECLADO), self.tema,
                         self.f_accion, icono=t("icono_tec_emergencia"))
-        b.poner_color(self.tema.rojo)
+        b.poner_color(self.tema.emergencia)
         b.configure(wraplength=max(caja.ancho - 12, 40))
         b.place(x=caja.x, y=caja.y, width=caja.ancho, height=caja.alto)
         reg.agregar(K.ID_EMERGENCIA_TECLADO, b, None, interno=True)
@@ -1020,7 +1024,9 @@ class VentanaTeclado:
                         icono=t("icono_tec_pestana"))
         b.pack(fill="both", expand=True)
         reg.agregar(ID_PESTANA, b, self.restaurar, tiempo_s=PESTANA_TIEMPO_S)
-        pw, ph = PESTANA_ANCHO, max(PESTANA_ALTO, 56)
+        # revisión de la 1.1: nunca más chica que lo que piden el ícono y la palabra (en 64 px se cortaban)
+        p.update_idletasks()
+        pw, ph = max(PESTANA_ANCHO, b.winfo_reqwidth()), max(PESTANA_ALTO, 56, b.winfo_reqheight())
         px = x + max((w - pw) // 2, 0)
         if self.cfg["teclado"].get("posicion") == "arriba":
             py = y

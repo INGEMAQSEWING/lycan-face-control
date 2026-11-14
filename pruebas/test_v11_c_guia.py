@@ -200,3 +200,64 @@ def test_repetir_y_atras_en_los_pasos_de_la_mirada():
     assert g._k == 0 and "mirada_puntos" not in g.resultados
     g.atras(t)
     assert g.paso == "mirada_centro"
+
+
+# ---- revisión de la 1.1: los pasos de la mirada nunca quedan detenidos para siempre ----
+def test_sin_ver_los_ojos_en_el_centro_se_dejan_los_ojos_y_sigue_la_calibracion():
+    """Un párpado caído (o lentes con reflejo): sin los dos ojos abiertos 15 s, la guía no espera
+    más: los ojos quedan sin calibrar (el puntero seguirá con la cabeza) y la calibración sigue."""
+    g = Guia(_cfg(), 0.0, preparar_s=0.3, monitor=MON)
+    t = _hasta_mirada(g, 0.0)
+    cerrados = medidas_mirando(*MON.centro, ojos=0.2)
+    n = 0
+    while g.paso == "mirada_centro" and n < int(60 / DT):          # nunca más de 1 minuto
+        g.alimentar(t, cerrados, 0.15)
+        t += DT
+        n += 1
+    assert g.paso not in PASOS_MIRADA, g.paso
+    assert n * DT <= G.MIRADA_SIN_OJOS_MAX_S + 0.3 + 1.0
+    assert g.modelo_mirada is None and "mirada_sin_ojos" in g.avisos
+    # la calibración de la cabeza termina bien y sin la parte de los ojos
+    m = medidas_mirando(*MON.centro)
+    while not g.terminado:
+        g.alimentar(t, m, 0.15)
+        t += DT
+    cal = g.resultado()
+    cal = cal[0] if isinstance(cal, tuple) else cal
+    assert "mirada" not in cal
+
+
+def test_un_punto_que_no_se_puede_mirar_se_salta():
+    g = Guia(_cfg(), 0.0, preparar_s=0.3, monitor=MON)
+    t = _hasta_mirada(g, 0.0)
+    while g.paso == "mirada_centro":
+        g.alimentar(t, medidas_mirando(*MON.centro), 0.15)
+        t += DT
+    assert g.paso == "mirada_puntos"
+    # el primer punto (arriba a la izquierda) no se logra: los ojos se ven medio cerrados
+    k0 = g._k
+    while g._k == k0:
+        est = g.estado(t)
+        g.alimentar(t, medidas_mirando(*est.punto, ojos=0.2), 0.15)
+        t += DT
+    t = _correr_mirada(g, t)
+    assert len(g.resultados["mirada_puntos"]) == 8
+    assert g.modelo_mirada is not None
+
+
+def test_si_no_quedan_5_puntos_se_dejan_los_ojos():
+    g = Guia(_cfg(), 0.0, preparar_s=0.3, monitor=MON)
+    t = _hasta_mirada(g, 0.0)
+    while g.paso == "mirada_centro":
+        g.alimentar(t, medidas_mirando(*MON.centro), 0.15)
+        t += DT
+    n = 0
+    while g.paso == "mirada_puntos" and n < int(5 * 60 / DT):
+        est = g.estado(t)
+        g.alimentar(t, medidas_mirando(*(est.punto or MON.centro), ojos=0.2), 0.15)
+        t += DT
+        n += 1
+    assert g.paso not in PASOS_MIRADA
+    assert g.modelo_mirada is None and "mirada_sin_ojos" in g.avisos
+    # 9 puntos: al quinto saltado ya no pueden quedar 5 (no se espera 9 × 15 s)
+    assert n * DT < 5 * (G.MIRADA_SIN_OJOS_MAX_S + 1.5)

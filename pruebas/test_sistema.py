@@ -177,7 +177,7 @@ def test_constantes_de_la_cara():
 def test_version_y_argumentos():
     from lycan_face_control import VERSION
     from lycan_face_control.app import argumentos
-    assert VERSION == "1.0.0"
+    assert VERSION == "1.1.0"
     a = argumentos(["--simular", "--camara-falsa", "--minimizado"])
     assert a.simular and a.camara_falsa and a.minimizado and not a.check
     assert argumentos(["--check"]).check

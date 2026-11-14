@@ -13,8 +13,9 @@ el modo Desplazar aparece "Terminar" (y no se puede minimizar: "Terminar" tiene 
 - «Minimizar» esconde la barra y deja la pestaña «Barra» en el mismo borde; quedarse quieto
   0,6 s sobre la pestaña (``ui:barra_mostrar``, también en pausa) o el ratón del cuidador la
   vuelven a abrir. Lo minimizado no se guarda: al abrir el programa manda ``barra.visible``.
-- Con el teclado abierto la barra no muestra «Sin clic» ni «Lupa» (cabe en una columna y el
-  teclado conserva su ancho; ver docs/decisiones.md).
+- Con el teclado abierto la barra no muestra «Sin clic», «Lupa» ni (desde la revisión de la 1.1)
+  «Minimizar»: cabe en una columna y el teclado conserva su ancho; ver docs/decisiones.md. Si
+  aun así el botón queda más bajo que ícono + texto (letra grande), va solo el texto.
 
 1.1 paquete B:
 - Botón rojo «AYUDA» (``barra:ayuda``) al final, con doble separación antes. Lo atiende la
@@ -25,6 +26,7 @@ el modo Desplazar aparece "Terminar" (y no se puede minimizar: "Terminar" tiene 
 """
 from __future__ import annotations
 
+import logging
 import math
 import tkinter as tk
 import tkinter.font as tkfont
@@ -32,6 +34,8 @@ import tkinter.font as tkfont
 from .. import constantes as K
 from .comun import LETRA, MIN_PT_BARRA, BotonGrande, area_de_trabajo, escala, no_activar, tema
 from .textos import t
+
+log = logging.getLogger(__name__)
 
 SEPARACION = 12
 MARGEN_BORDE = 8
@@ -44,7 +48,9 @@ ID_MOSTRAR = "ui:barra_mostrar"
 PESTANA_TIEMPO_S = 0.6      # abrir la barra no tiene riesgo: basta poco tiempo quieto
 PESTANA_CORTO, PESTANA_LARGO = 56, 120
 PT_PESTANA = 18
-SIN_TECLADO = ("sin_clic", "lupa")    # botones que no se muestran con el teclado abierto
+# botones que no se muestran con el teclado abierto (1.1, revisión: tampoco «Minimizar», para que con
+# AYUDA la barra siga cabiendo en una columna y el teclado conserve su ancho)
+SIN_TECLADO = ("sin_clic", "lupa", "minimizar")
 # 1.1 paquete B: AYUDA
 AYUDA_MIN_PX = 72                     # el AYUDA de la pestaña nunca es más chico que esto
 
@@ -102,6 +108,7 @@ class BarraAcciones:
         # 1.1: minimizada en esta sesión (no se guarda); al abrir manda barra.visible
         self.minimizada = not bool(self.cfg["barra"].get("visible", True))
         self.con_teclado = False
+        self.sin_icono = False
         self._avisado_minimizar = False
         self.botones: dict = {}
         self.boton_pestana = None
@@ -166,6 +173,9 @@ class BarraAcciones:
         ancho, alto, sep, cols = medidas_barra(len(ids), int(cfg["barra"].get("boton_px", 96)), area, vertical,
                                                alto_nat, ancho_nat, extra=SEPARACION if "ayuda" in ids else 0)
         self.medidas = (ancho, alto, sep, cols)
+        # 1.1 (revisión): si el botón queda más bajo que ícono + texto (letra grande con el teclado
+        # abierto), va solo el texto en una línea: nunca un AYUDA recortado
+        self.sin_icono = alto < alto_nat
         por_col = math.ceil(len(ids) / cols)
         w = self.win = tk.Toplevel(self.root)
         w.overrideredirect(True)
@@ -185,11 +195,13 @@ class BarraAcciones:
             py = 0 if fila == 0 else (2 * sep if doble and vertical else sep)
             marco.grid(row=fila, column=col, padx=(px, 0), pady=(py, 0))
             texto, icono = textos[ident]
+            if self.sin_icono:
+                icono = ""
             oid = self._oid(ident)
             b = BotonGrande(marco, texto, self._comando(ident), T, f_texto, icono=icono)
             b.configure(font=f_texto)
             if ident == "ayuda":
-                b.poner_color(T.rojo)        # rojo con texto negro (7:1)
+                b.poner_color(T.emergencia)  # rojo con texto negro (7:1), también en alto contraste
             b.pack(fill="both", expand=True)
             interno = (oid.startswith("barra:") and ident != "minimizar") or oid == K_TERMINAR
             reg.agregar(oid, b, self._accion(ident), interno=interno)
@@ -234,7 +246,7 @@ class BarraAcciones:
         if (self.cfg.get("emergencia") or {}).get("activa", True):
             ba = BotonGrande(p, t("barra_ayuda"), reg.comando(K.ID_EMERGENCIA_PESTANA), T,
                              (LETRA, PT_PESTANA, "bold"), icono=t("icono_ayuda"))
-            ba.poner_color(T.rojo)
+            ba.poner_color(T.emergencia)
             reg.agregar(K.ID_EMERGENCIA_PESTANA, ba, None, interno=True)
             self.boton_pestana_ayuda = ba
         p.update_idletasks()
@@ -314,6 +326,7 @@ class BarraAcciones:
             return
         self.minimizada = False
         self._aplicar_visibilidad()
+        self._acomodar_teclado()
 
     def minimizar(self):
         """Esconde la barra en el borde (no en el modo Desplazar: "Terminar" tiene que verse)."""
@@ -321,11 +334,24 @@ class BarraAcciones:
             return
         self.minimizada = True
         self._aplicar_visibilidad()
+        self._acomodar_teclado()
         if not self._avisado_minimizar:
             self._avisado_minimizar = True
             f = getattr(self.app, "mostrar_aviso", None)
             if f is not None:
                 f(t("globo_minimizar"), 8)
+
+    def _acomodar_teclado(self):
+        """1.1 (revisión): con el teclado abierto, al minimizar o mostrar la barra el teclado se
+        rehace para no tapar la pestaña (ni quedar debajo de la barra)."""
+        tec = getattr(self.app, "teclado", None)
+        if tec is None or getattr(tec, "win", None) is None:
+            return
+        try:
+            self.root.update_idletasks()
+            tec.construir()
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo acomodar el teclado a la barra")
 
     # nombres de la versión 1.0 (la pestaña de "Mostrar la barra" apagado)
     def mostrar_temporal(self):
@@ -364,7 +390,7 @@ class BarraAcciones:
             b = self.botones.get("pausa")
             if b is not None:
                 texto, icono = self._texto("pausa")
-                b.poner_texto(texto, icono)
+                b.poner_texto(texto, "" if self.sin_icono else icono)
                 b.poner_color(self.tema.verde if m.estado == K.PAUSA else None)
         clave = (m.modo_clic, sub)
         if clave != self._modo:

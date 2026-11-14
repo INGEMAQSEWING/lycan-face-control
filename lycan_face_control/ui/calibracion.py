@@ -24,6 +24,7 @@ import copy
 import logging
 import queue
 import tkinter as tk
+import tkinter.font as tkfont
 
 from ..calibracion_guiada import PARPADEOS_LARGOS, PASOS_MIRADA, Guia
 from ..config import FUENTES, PARPADEO_LARGO_PISO_MS, validar
@@ -33,6 +34,7 @@ from .textos import t
 
 log = logging.getLogger("lycan")
 
+SELECTOR_IPADY = 12         # ◀ y ▶ de la presentación: al menos 72 px de alto
 REFRESCO_MS = 50
 DIBUJO = {"posicion": ("reposo", None), "centro": ("reposo", None), "izq": ("mirar", "izq"),
           "der": ("mirar", "der"), "arr": ("mirar", "arr"), "aba": ("mirar", "aba"), "reposo": ("reposo", None),
@@ -100,31 +102,49 @@ class VentanaCalibracion:
         return b
 
     def _pantalla_intro(self):
+        """Presentación. Revisión de la 1.1: los botones (Empezar/Cancelar y el selector ◀ ▶) se
+        empacan primero, así nunca son lo que se recorta en una pantalla chica; el dibujo de la cara
+        se achica (o no va) si falta alto, y la etiqueta del selector tiene ancho fijo para que ◀ y ▶
+        no cambien de lugar bajo el puntero al elegir."""
         self._limpiar()
         T = self.tema
-        tk.Label(self.cuerpo, text=t("cal_intro_titulo"), bg=T.fondo, fg=T.texto, font=letra(self.cfg, 26, True),
-                 wraplength=self.W - 60, justify="center").pack(pady=(10, 10))
-        c = tk.Canvas(self.cuerpo, width=240, height=240, bg=T.fondo, highlightthickness=0)
-        c.pack()
-        dibujar_cara(c, 120, 115, 190, T.acento)
-        tk.Label(self.cuerpo, text=t("cal_intro"), bg=T.fondo, fg=T.texto, font=letra(self.cfg, 18),
-                 wraplength=self.W - 80, justify="center").pack(pady=10)
         fila = tk.Frame(self.cuerpo, bg=T.fondo)
         fila.pack(side="bottom", fill="x", pady=8)
         # 1.1 paquete C: «Mover el puntero con  ◀ La cabeza ▶»
         sel = tk.Frame(self.cuerpo, bg=T.fondo)
         sel.pack(side="bottom", pady=4)
-        tk.Label(sel, text=t("cal_fuente"), bg=T.fondo, fg=T.texto, font=letra(self.cfg, 18)).pack(side="left",
-                                                                                                padx=8)
-        self._boton(sel, "◀", "cal:fuente:menos", lambda e=None: self.cambiar_fuente(-1), side="left", padx=4)
-        self.lbl_fuente = tk.Label(sel, text=t(f"op_fuente_{self.fuente}"), bg=T.fondo, fg=T.acento,
-                                   font=letra(self.cfg, 18, True))
-        self.lbl_fuente.pack(side="left", padx=8)
-        self._boton(sel, "▶", "cal:fuente:mas", lambda e=None: self.cambiar_fuente(+1), side="left", padx=4)
+        f18 = letra(self.cfg, 18)
+        f18b = letra(self.cfg, 18, True)
+        tk.Label(sel, text=t("cal_fuente"), bg=T.fondo, fg=T.texto, font=f18).pack(side="left", padx=8)
+        self._boton(sel, "◀", "cal:fuente:menos", lambda e=None: self.cambiar_fuente(-1), side="left", padx=4,
+                    ipady=SELECTOR_IPADY, ipadx=8)
+        medida = tkfont.Font(root=self.root, font=f18b)
+        ancho = max(medida.measure(t(f"op_fuente_{f}")) for f in FUENTES) + 16
+        caja = tk.Frame(sel, bg=T.fondo, width=ancho, height=medida.metrics("linespace") + 8)
+        caja.pack_propagate(False)
+        caja.pack(side="left", padx=8)
+        self.lbl_fuente = tk.Label(caja, text=t(f"op_fuente_{self.fuente}"), bg=T.fondo, fg=T.acento, font=f18b)
+        self.lbl_fuente.pack(expand=True)
+        self._boton(sel, "▶", "cal:fuente:mas", lambda e=None: self.cambiar_fuente(+1), side="left", padx=4,
+                    ipady=SELECTOR_IPADY, ipadx=8)
         self._boton(fila, "cal_empezar", "cal:empezar", self.empezar, color=T.verde, side="left", expand=True,
                     fill="x", padx=8)
         self._boton(fila, "btn_cancelar", "cal:cancelar", self.cancelar, side="left", expand=True, fill="x", padx=8)
         boton_ayuda(fila, t("cal_ayuda"), self.cfg, T).pack(side="left", padx=8)
+        tk.Label(self.cuerpo, text=t("cal_intro_titulo"), bg=T.fondo, fg=T.texto, font=letra(self.cfg, 26, True),
+                 wraplength=self.W - 60, justify="center").pack(pady=(10, 10))
+        tk.Label(self.cuerpo, text=t("cal_intro"), bg=T.fondo, fg=T.texto, font=f18,
+                 wraplength=self.W - 80, justify="center").pack(side="bottom", pady=10)
+        # el dibujo, solo con el alto que sobra (240 px, 160 px o nada)
+        self.cuerpo.update_idletasks()
+        usado = sum(c.winfo_reqheight() + 20 for c in self.cuerpo.winfo_children())
+        sobra = self.H - 24 - usado
+        lado = 240 if sobra >= 250 else (160 if sobra >= 170 else 0)
+        self.lado_intro = lado
+        if lado:
+            c = tk.Canvas(self.cuerpo, width=lado, height=lado, bg=T.fondo, highlightthickness=0)
+            c.pack()
+            dibujar_cara(c, lado / 2, lado * 0.48, lado * 0.79, T.acento)
 
     def _pantalla_pasos(self):
         self._limpiar()

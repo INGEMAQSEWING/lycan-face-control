@@ -203,7 +203,7 @@ def test_textos_de_la_emergencia():
     # la Ayuda nombra el atajo que de verdad está puesto
     cfg = C.por_defecto()
     cfg["atajos"]["emergencia"] = "Ctrl+Alt+F9"
-    assert "Ctrl+Alt+F9" in T.t("ayuda_emergencia", mensaje="x", **T.atajos_kw(cfg))
+    assert "Ctrl+Alt+F9" in T.t("ayuda_emergencia", mensaje="x", **T.atajos_kw(cfg), **T.ayuda_kw(cfg))
     assert "Ctrl+Alt+F9" in T.t("ayuda_cuidador", **T.atajos_kw(cfg))
     for clave in [k for k in T.TXT if "emergencia" in k or k in ("btn_ayuda", "tec_ayuda_btn", "barra_ayuda")]:
         bajo = " " + T.TXT[clave].lower() + " "

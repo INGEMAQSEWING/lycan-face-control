@@ -45,6 +45,7 @@ MOTOR_COLGADO_S = 12.0          # hilo vivo pero sin latido este tiempo: trabado
 MAX_REINICIOS = 3
 REINICIOS_VENTANA_S = 300.0     # se rinde con 3 reinicios en 5 minutos (no en toda la sesión)...
 REINTENTO_RENDIDO_S = 60.0      # ...pero nunca para siempre: vuelve a intentar cada minuto
+REINTENTO_VENTANA_S = 5.0       # 1.1: si la pantalla roja no se pudo crear, se reintenta cada 5 s
 ESPERA_MOTOR_VIEJO_S = 10.0     # antes de crear otro motor, el viejo suelta la cámara y FaceMesh
 GUARDAR_PALABRAS_S = 300.0      # las palabras aprendidas se guardan cada 5 minutos si cambiaron
 AVISOS_POR_VUELTA = 60
@@ -86,6 +87,8 @@ class App:
         self._ciclo_voz = 0
         self._alarma_callada = False
         self._loop_alarma = None
+        self._sin_ventana = False              # emergencia en curso sin pantalla roja (Tk falló)
+        self._t_reintento_ventana = None
         self.alarma = None                     # se crea la primera vez (sistema/alarma.py)
         self._avisado_tec_minimizar = False
         self.ultima_vista = None
@@ -214,6 +217,7 @@ class App:
             self._callar_alarma()
             if self._emergencia_local or not self._motor_funciona():
                 self.cerrar_emergencia()
+                self._avisar_atendido_al_motor()
                 return
         if nombre == "config" and args and getattr(self.args, "camara", None) is not None:
             try:
@@ -567,9 +571,21 @@ class App:
         self._callar_alarma()
         if self.emergencia is not None and (self.emergencia.prueba or self._emergencia_local
                                             or not self._motor_funciona()):
+            prueba = self.emergencia.prueba
             self.cerrar_emergencia()
+            if not prueba:
+                self._avisar_atendido_al_motor(origen)
             return
         self.orden("atendido", origen)
+
+    def _avisar_atendido_al_motor(self, origen: str = "cuidador"):
+        """Cerrada aquí (detección caída o recién reiniciada): la máquina también se entera, para
+        que no vuelva a abrirla si ya recibió la emergencia tras un reinicio. Sin emergencia no
+        hace nada."""
+        try:
+            self.motor.orden("atendido", origen)
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo avisar a la detección que ya atendieron")
 
     def _nueva_alarma(self, volumen):
         if not self.sistema or self.simulada:
@@ -626,6 +642,12 @@ class App:
                 self.cerrar_emergencia(avisar=False)   # una emergencia de verdad reemplaza la prueba
             else:
                 return e
+        if self._sin_ventana:
+            # 1.1 (revisión): la alarma ya suena sin pantalla roja; solo se reintenta la ventana,
+            # como máximo una vez cada REINTENTO_VENTANA_S (no un error por cuadro)
+            if not prueba:
+                self._reintentar_ventana_emergencia()
+            return self.emergencia
         from .. import emergencia as E
         from .emergencia import VentanaEmergencia
         try:
@@ -638,6 +660,14 @@ class App:
         except Exception:  # noqa: BLE001
             log.exception("No se pudo abrir la pantalla de emergencia")
             self.emergencia = None
+            if prueba:
+                return None
+            # sin pantalla roja la alarma y la voz suenan igual (la emergencia no depende de Tk)
+            self._sin_ventana = True
+            self._t_reintento_ventana = time.monotonic()
+            from .textos import atajos_kw
+            self.mostrar_aviso(t("aviso_emergencia_sin_pantalla",
+                                 atajo=atajos_kw(self.cfg.datos)["emergencia"]), 30)
         self._emergencia_local = bool(local) and not prueba
         self._t_emergencia = time.monotonic()
         c = self.cfg.datos.get("emergencia", {})
@@ -657,6 +687,28 @@ class App:
         self._paso_alarma()
         return self.emergencia
 
+    def _reintentar_ventana_emergencia(self):
+        ahora = time.monotonic()
+        if self._t_reintento_ventana is not None and ahora - self._t_reintento_ventana < REINTENTO_VENTANA_S:
+            return
+        self._t_reintento_ventana = ahora
+        from .emergencia import VentanaEmergencia
+        try:
+            self.emergencia = VentanaEmergencia(self.root, self, self._monitor_emergencia(), prueba=False,
+                                                al_cerrar=self._emergencia_cerrada)
+        except Exception:  # noqa: BLE001
+            log.warning("Sigue sin poder abrirse la pantalla de emergencia (la alarma suena igual)")
+            self.emergencia = None
+            return
+        self._sin_ventana = False
+        log.info("La pantalla de emergencia se pudo abrir al reintentar")
+
+    def emergencia_abierta(self) -> bool:
+        """Hay una emergencia en curso: con pantalla roja o, si la ventana no se pudo crear, solo
+        con la alarma."""
+        e = self.emergencia
+        return (e is not None and e.viva()) or self._sin_ventana
+
     def probar_alarma(self, volumen=None):
         """Opciones › Emergencia › «Probar la alarma (3 segundos)»."""
         return self.abrir_emergencia("prueba", prueba=True, volumen=volumen)
@@ -665,7 +717,11 @@ class App:
         """Cada 200 ms con la pantalla roja abierta: alarma, voz o silencio según el plan."""
         self._loop_alarma = None
         e, plan = self.emergencia, self._plan_alarma
-        if e is None or plan is None or not e.viva() or self.cerrando:
+        if plan is None or self.cerrando:
+            return
+        if e is None and not self._sin_ventana:
+            return
+        if e is not None and not e.viva():
             return
         from .. import emergencia as E
         ahora = time.monotonic()
@@ -727,7 +783,14 @@ class App:
             except Exception:  # noqa: BLE001
                 pass
             self._loop_alarma = None
+        sin_ventana = self._sin_ventana
+        self._sin_ventana = False
         if e is None:
+            if sin_ventana:
+                self._plan_alarma = None
+                self._emergencia_local = False
+                if avisar:
+                    self.mostrar_aviso(t("aviso_emergencia_fin"), 5)
             return
         prueba = e.prueba
         self.emergencia = None
@@ -751,8 +814,10 @@ class App:
         if getattr(m, "emergencia", False):
             if not viva:
                 self.abrir_emergencia("vista")
-        elif viva and not e.prueba and not self._emergencia_local and self._t_emergencia is not None \
+        elif (viva or self._sin_ventana) and not (viva and e.prueba) and not self._emergencia_local \
+                and self._t_emergencia is not None and self._motor_viejo is None \
                 and time.monotonic() - self._t_emergencia > 1.5:
+            # (con un motor viejo trabado esperando, la vista no es de una máquina nueva)
             self.cerrar_emergencia()
 
     # ------------------------------------------------------------ voz
@@ -865,7 +930,8 @@ class App:
             # la máquina ya recibió «atendido» (hilo de atajos); con el motor caído, la prueba o la
             # pantalla abierta por la interfaz, se cierra aquí
             e = self.emergencia
-            if e is not None and (e.prueba or self._emergencia_local or not self._motor_funciona()):
+            if (e is not None or self._sin_ventana) and \
+                    ((e is not None and e.prueba) or self._emergencia_local or not self._motor_funciona()):
                 self.cerrar_emergencia()
             return
         if nombre == "pausar":
@@ -1216,6 +1282,11 @@ class App:
         self.motor = self._crear_motor()
         self.motor.start()
         self.motor.orden("pausar", "reinicio")
+        if self.emergencia_abierta() and not (self.emergencia is not None and self.emergencia.prueba):
+            # 1.1 (revisión): la máquina nueva empieza sin emergencia; se le pasa la que estaba
+            # abierta, para que la pantalla roja y la alarma sigan hasta que alguien la atienda
+            self.motor.orden("ayuda", "reinicio")
+            self._emergencia_local = False      # ahora la sigue la máquina nueva
         self._t_ult_vista = ahora
         self._soltado_lento = False
         self.registro.publicar(forzar=True)

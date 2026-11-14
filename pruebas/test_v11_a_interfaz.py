@@ -238,10 +238,12 @@ def test_velocidad_arriba_y_abajo_recalcula_la_vertical(app_viva):
     op = app.abrir_opciones()
     _girar(app, 200)
     lbl, ctl = op.etiquetas_valor["puntero.ajuste_vertical"]
-    assert lbl.cget("text") == "120 % de la de los lados"
+    assert lbl.cget("text") == "120 %"
+    f = tkfont.Font(root=app.root, font=lbl.cget("font"))
+    assert f.measure(lbl.cget("text")) <= lbl.winfo_width()      # el número se ve entero
     for _ in range(2):
         op.cambiar(ctl, -1)
-    assert lbl.cget("text") == "Igual que a los lados"
+    assert lbl.cget("text") == "Igual"
     assert op.datos["puntero"]["sens_y"] == op.datos["puntero"]["sens_x"] == 1.0
     for _ in range(20):
         op.cambiar(ctl, +1)
@@ -251,6 +253,7 @@ def test_velocidad_arriba_y_abajo_recalcula_la_vertical(app_viva):
         op.cambiar(ctl, -1)
     assert op.datos["puntero"]["ajuste_vertical"] == 0.8
     assert op.datos["puntero"]["sens_y"] == 0.92                 # piso: sigue llegando a los bordes
+    assert lbl.cget("text") == "92 %"                            # se muestra lo que de verdad queda
     op.guardar()
     assert app.cfg.datos["puntero"]["ajuste_vertical"] == 0.8
     assert app.cfg.datos["perfiles"]["Principal"]["calibracion"] == CAL_SINTETICA

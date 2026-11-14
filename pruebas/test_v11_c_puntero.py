@@ -328,3 +328,20 @@ def test_pausa_con_los_ojos_reanudar_mirando_el_boton():
     mirar(s, 1100, 575, 3.0)
     assert s.maquina.estado == K.ACTIVO
     assert s.clics() == []
+
+
+def test_recentrar_con_los_ojos_no_se_pierde_al_cambiar_una_opcion():
+    """Revisión de la 1.1: el cuidador toca cualquier «+» o «−» de Opciones (la vista previa manda
+    la configuración a la máquina) y la mirada no vuelve a quedar corrida."""
+    import copy
+    s = sim_ojos()
+    mirar(s, *MON.centro, 0.5)
+    s.maquina.puntero._mirada.modelo.desplazamiento = (35.0, -20.0)    # lo que dejó «Recentrar»
+    cfg = copy.deepcopy(s.cfg)
+    cfg["emergencia"]["volumen"] = 80
+    s.orden("nueva_config", cfg)
+    assert s.maquina.puntero.usa_ojos
+    assert s.maquina.puntero._mirada.modelo.desplazamiento == pytest.approx((35.0, -20.0))
+    # con una calibración nueva se empieza de cero
+    s.orden("nueva_config", copy.deepcopy(cfg), cal_con_mirada())
+    assert s.maquina.puntero._mirada.modelo.desplazamiento == pytest.approx((0.0, 0.0))

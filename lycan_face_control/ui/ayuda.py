@@ -12,7 +12,7 @@ import tkinter as tk
 
 from ..version import VERSION
 from .comun import BotonGrande, acomodar_pestanas, area_libre, dibujar_cara, letra, no_activar, tema
-from .textos import atajos_kw, barra_uso, nombre_accion, pausa_uso, t
+from .textos import atajos_kw, ayuda_kw, barra_uso, nombre_accion, pausa_uso, t
 
 SECCIONES = ("gestos", "uso", "cuidador", "problemas", "acerca")
 # 1.1 paquete B: página del botón AYUDA (emergencia), después de «Cómo se usa»
@@ -201,7 +201,7 @@ class VentanaAyuda:
         # los atajos y la forma de pausar son los que de verdad están puestos (no los de fábrica)
         from ..emergencia import mensaje_voz
         texto = t(f"ayuda_{seccion}", version=VERSION, pausa=pausa_uso(cfg), barra=barra_uso(cfg),
-                  mensaje=mensaje_voz(cfg), **atajos_kw(cfg))
+                  mensaje=mensaje_voz(cfg), **atajos_kw(cfg), **ayuda_kw(cfg))
         paginas = self.paginas_de(texto, disponible, letra(cfg, 16))
         self.paginas = len(paginas)
         self.pagina = min(self.pagina, self.paginas - 1)

@@ -358,6 +358,7 @@ TXT: dict[str, str] = {
     "op_minutos": "{n} min",
     "op_segundos": "{n} s",
     "op_porcentaje": "{n} %",
+    "op_pixeles": "{n} px",
     "accion_ninguna": "Nada",
     "accion_clic": "Clic (el de la barra)",
     "accion_clic_izq": "Clic izquierdo",
@@ -474,7 +475,7 @@ TXT: dict[str, str] = {
                  "formas así: {cansado|cansada}."),
 
     # ---- ayuda ----
-    "ayuda_titulo": "Ayuda",
+    "ayuda_titulo": "Cómo usar",
     "ayuda_sec_gestos": "Gestos",
     "ayuda_sec_uso": "Cómo se usa",
     "ayuda_sec_cuidador": "Para el cuidador",
@@ -561,9 +562,10 @@ TXT.update({
                            "llega a toda la pantalla girando la cabeza dentro de su rango cómodo. La calibración "
                            "no cambia."),
     "op_ajuste_vertical": "Velocidad arriba y abajo",
-    "op_ajuste_vertical_igual": "Igual que a los lados",
-    "op_ajuste_vertical_valor": "{n} % de la de los lados",
-    "op_ajuste_vertical_ayuda": "Si le cuesta más subir y bajar la cabeza que girarla, súbalo.",
+    "op_ajuste_vertical_igual": "Igual",
+    "op_ajuste_vertical_valor": "{n} %",
+    "op_ajuste_vertical_ayuda": ("100 % = igual que a los lados; más = el puntero va más rápido arriba y abajo. "
+                                 "Si le cuesta más subir y bajar la cabeza que girarla, súbalo."),
     # lupa (pestaña Clic)
     "op_lupa_aumento": "La lupa agranda",
     "op_lupa_aumento_valor": "{n} veces",
@@ -630,7 +632,12 @@ TXT.update({
     "emergencia_prueba": "Prueba de la alarma: se apaga sola en 3 segundos.",
     "aviso_emergencia_fin": "Alarma apagada.",
     "aviso_alarma_falla": "No pude hacer sonar la alarma. La pantalla roja y la voz siguen.",
+    "aviso_emergencia_sin_pantalla": ("PIDIERON AYUDA. No pude mostrar la pantalla roja, pero la alarma suena. "
+                                      "Para apagarla use {atajo}."),
     "aviso_emergencia_apagada": "Sin el botón AYUDA, la persona no podrá pedir ayuda con la cabeza.",
+    # revisión de la 1.1: si un gesto sostenido pide AYUDA, ese gesto sigue funcionando
+    "aviso_emergencia_apagada_gesto": ("Sin el botón AYUDA ya no hay botón para pedir ayuda. El gesto sostenido que "
+                                       "dice «Pedir AYUDA (alarma)» sigue pidiéndola."),
     "op_tab_emergencia": "Emergencia",
     "op_pestana_emergencia": "Emergencia",
     "op_emergencia_activa": "Botón AYUDA (emergencia)",
@@ -647,7 +654,7 @@ TXT.update({
     "accion_emergencia": "Pedir AYUDA (alarma)",
     "ayuda_sec_emergencia": "Emergencia",
     "ayuda_emergencia": ("• Para pedir ayuda: quédese quieto sobre el botón rojo AYUDA de la barra (o del teclado) "
-                         "hasta que se llene el círculo, unos 2 segundos y medio. Pasar por encima no basta. "
+                         "hasta que se llene el círculo, unos {segundos} segundos. Pasar por encima no basta. "
                          "También sirve en pausa y con la barra minimizada (la pestaña tiene su AYUDA).\n"
                          "• Con barrido: AYUDA está en la primera fila; elíjala con un parpadeo largo como "
                          "cualquier tecla.\n"
@@ -727,10 +734,11 @@ TXT.update({
                    "• Para elegirlo: Opciones › Puntero › «Mover el puntero con», o en la pantalla de inicio de la "
                    "calibración. Después hay que calibrar: se agregan unos pasos con puntos en la pantalla que "
                    "se siguen solo con los ojos.\n"
-                   "• Parpadear no mueve el puntero ni hace clic.\n"
-                   "• Con «Los ojos», quedarse mirando un punto hace aparecer la lupa; quédese mirando el punto exacto "
-                   "de la imagen grande para hacer el clic.\n"
-                   "• Cerca de un botón del programa el puntero se pega a su centro."),
+                   "• Parpadear no mueve el puntero ni hace clic.{ojos_lupa}{ojos_iman}"),
+    # revisión de la 1.1: estas dos líneas solo salen si el cuidador no apagó la lupa o el imán
+    "ayuda_ojos_lupa": ("\n• Con «Los ojos», quedarse mirando un punto hace aparecer la lupa; quédese mirando el "
+                        "punto exacto de la imagen grande para hacer el clic."),
+    "ayuda_ojos_iman": "\n• Cerca de un botón del programa el puntero se pega a su centro.",
 })
 
 
@@ -761,6 +769,26 @@ def atajos_kw(cfg: dict | None) -> dict:
     cuidador los cambió)."""
     a = (cfg or {}).get("atajos") or {}
     return {k: (a.get(k) or v) for k, v in ATAJOS_FABRICA.items()}
+
+
+def segundos_texto(v) -> str:
+    """2.5 -> "2,5"; 3.0 -> "3" (para la Ayuda)."""
+    try:
+        v = round(float(v), 1)
+    except (TypeError, ValueError):
+        return "2,5"
+    return str(int(v)) if v == int(v) else f"{v:.1f}".replace(".", ",")
+
+
+def ayuda_kw(cfg: dict | None) -> dict:
+    """Lo que la Ayuda dice según la configuración de verdad (revisión de la 1.1): el tiempo quieto
+    sobre AYUDA y si la lupa y el imán de los ojos están encendidos."""
+    c = cfg or {}
+    em = c.get("emergencia") or {}
+    ojos = c.get("ojos") or {}
+    return {"segundos": segundos_texto(em.get("permanencia_s", 2.5)),
+            "ojos_lupa": TXT["ayuda_ojos_lupa"] if ojos.get("lupa", True) else "",
+            "ojos_iman": TXT["ayuda_ojos_iman"] if ojos.get("iman", True) else ""}
 
 
 def barra_uso(cfg: dict | None) -> str:

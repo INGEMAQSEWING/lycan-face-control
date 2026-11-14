@@ -29,7 +29,13 @@ en píxeles reales del monitor):
 - ``mirada_cabeza``: 4 s mirando el centro mientras mueve la cabeza (enseña cuánto pesa la cabeza);
 - ``mirada_validar``: 4 puntos nuevos para medir el error real.
 
-En estos pasos el reloj solo corre con la cara **y los dos ojos abiertos**.
+En estos pasos el reloj solo corre con la cara **y los dos ojos abiertos**. Revisión de la 1.1: para
+no quedar detenidos para siempre (un párpado caído, frecuente en ELA), si pasan
+``MIRADA_SIN_OJOS_MAX_S`` (15 s) sin ver los dos ojos abiertos: en «mirada_centro» se dejan todos
+los pasos de la mirada (los ojos quedan sin calibrar y el puntero sigue con la cabeza, con el aviso
+``cal_mirada_fallo``); en «mirada_puntos» se salta ese punto y, si ya no pueden quedar 5 puntos, se
+dejan los pasos de la mirada; en «mirada_cabeza» y «mirada_validar» se cierra el paso con lo que
+haya.
 """
 from __future__ import annotations
 
@@ -68,6 +74,8 @@ CABEZA_MOVIDA_SIGMAS = 3.0
 PESO_CABEZA = 3.0            # las muestras del paso "cabeza en movimiento" valen como 3 puntos
 ERROR_IMPRECISO_PX = 250     # con más error se recomienda «Ojos y cabeza» o «La cabeza»
 DISTANCIA_SUPUESTA_CM = 60.0
+MIRADA_SIN_OJOS_MAX_S = 15.0  # sin los dos ojos abiertos este tiempo, el paso (o el punto) no se espera más
+PUNTOS_MINIMOS = 5           # con menos puntos medidos no se puede ajustar el modelo de la mirada
 
 
 def puntos_mirada(monitor, n: int = 9) -> list:
@@ -190,6 +198,8 @@ class Guia:
         self._sub = []                 # muestras del punto o del paso
         self._repeticiones = 0
         self._repetir_punto = False
+        self._t_sin_ojos = 0.0         # tiempo seguido sin los dos ojos abiertos (en este punto o paso)
+        self._saltados = 0             # puntos que se saltaron por no ver los ojos
 
     def repetir(self, t: float):
         self.terminado = False
@@ -314,7 +324,11 @@ class Guia:
         ojos = self._ojos_abiertos(m)
         self._sin_ojos = not ojos
         if not ojos:
+            self._t_sin_ojos += dt
+            if self._t_sin_ojos >= MIRADA_SIN_OJOS_MAX_S - 1e-9:
+                self._sin_ojos_demasiado(t, p)
             return self.estado(t)            # el reloj se detiene
+        self._t_sin_ojos = 0.0
         r = rasgos(m)
         muestra = (r[0], r[1], float(m.yaw_n), float(m.pitch_n), float(getattr(m, "io_px", float("nan"))))
         if p in ("mirada_centro", "mirada_cabeza"):
@@ -340,6 +354,43 @@ class Guia:
                 self._cerrar_mirada(p)
                 self._siguiente(t)
         return self.estado(t)
+
+    def _sin_ojos_demasiado(self, t: float, p: str):
+        """No se vieron los dos ojos abiertos durante ``MIRADA_SIN_OJOS_MAX_S``: no se espera más."""
+        self._t_sin_ojos = 0.0
+        if p == "mirada_centro":
+            self._dejar_mirada(t)
+            return
+        if p == "mirada_puntos":
+            puntos = self._puntos_paso(p)
+            self._sub = []
+            self._c = 0.0
+            self._repeticiones = 0
+            self._repetir_punto = False
+            self._k += 1
+            self._saltados += 1
+            if len(puntos) - self._saltados < PUNTOS_MINIMOS:
+                self._dejar_mirada(t)
+                return
+            if self._k >= len(puntos):
+                self._cerrar_mirada(p)
+                self._siguiente(t)
+            return
+        # mirada_cabeza (lo medido hasta ahora) y mirada_validar (los puntos ya vistos)
+        self._cerrar_mirada(p)
+        self._siguiente(t)
+
+    def _dejar_mirada(self, t: float):
+        """Los ojos no se pueden calibrar: sin modelo de la mirada (la pantalla de calibración deja
+        el puntero con la cabeza y lo dice) y se sigue con el paso de después de la mirada."""
+        self.modelo_mirada = None
+        self.mirada_info = None
+        self.resultados.pop("mirada_puntos", None)
+        if "mirada_sin_ojos" not in self.avisos:
+            self.avisos.append("mirada_sin_ojos")
+        ultimo = max(i for i, x in enumerate(self.pasos) if x in PASOS_MIRADA)
+        self.i = ultimo
+        self._siguiente(t)
 
     def _mediana(self, filas, i):
         vals = [f[i] for f in filas if math.isfinite(f[i])]

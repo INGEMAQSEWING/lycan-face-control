@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import logging
 import tkinter as tk
+import tkinter.font as tkfont
 
 from .. import constantes as K
 from ..config import OPCIONES, RANGOS, por_defecto, validar
@@ -43,6 +44,9 @@ AJUSTE_VERTICAL_FABRICA = 1.2
 SENS_Y_MIN, SENS_Y_MAX = 0.92, 3.3     # por debajo de 0,92 el puntero deja de llegar a los bordes
 
 
+NOMBRE_MIN_PX = 200          # revisión de la 1.1: el nombre de una opción nunca queda más angosto que esto
+
+
 def _ajuste_valido(ajuste_vertical) -> float:
     lo, hi = RANGOS["puntero.ajuste_vertical"]
     try:
@@ -67,6 +71,18 @@ def sens_de_velocidad(n: int, ajuste_vertical: float = AJUSTE_VERTICAL_FABRICA) 
     sx = SENS_VELOCIDAD[n - 1]
     sy = round(max(min(sx * _ajuste_valido(ajuste_vertical), SENS_Y_MAX), SENS_Y_MIN), 2)
     return sx, sy, JOYSTICK_VELOCIDAD[n - 1]
+
+
+def ajuste_efectivo(puntero: dict, ajuste_vertical) -> float:
+    """sens_y / sens_x (lo que de verdad sube y baja respecto de los lados), redondeado a 0,01; si
+    no se puede calcular, el ajuste pedido."""
+    try:
+        sx, sy = float(puntero.get("sens_x")), float(puntero.get("sens_y"))
+        if sx > 0 and sx == sx and sy == sy:
+            return round(sy / sx, 2)
+    except (TypeError, ValueError):
+        pass
+    return float(_ajuste_valido(ajuste_vertical))
 
 
 def velocidad_de_sens(sens_x: float) -> int:
@@ -133,6 +149,10 @@ def _entero(v):
     return str(int(round(float(v))))
 
 
+def _px(v):
+    return t("op_pixeles", n=int(round(float(v))))
+
+
 def _veces(v):
     return _decimal(float(v)) + " ×"
 
@@ -194,7 +214,7 @@ def controles_ojos(datos: dict | None = None) -> list:
     ]
     if datos is None or fuente == "cabeza_y_ojos":
         filas += [
-            ("num", "ojos.salto_px", "op_ojos_salto", 20, _entero),
+            ("num", "ojos.salto_px", "op_ojos_salto", 20, _px),
             ("num", "ojos.ganancia_fina", "op_ojos_fina", 0.1, _veces),
         ]
     filas.append(("opc", "ojos.puntos_cal", "op_ojos_puntos", (5, 9), _puntos_cal))
@@ -239,7 +259,7 @@ def controles(pestana: str, gesto: str = "boca", datos: dict | None = None) -> l
             ("bool", "barra.modo_fijo", "op_barra_fijo", None, None),
             # ---- 1.1 paquete A: lupa ----
             ("num", "lupa.aumento", "op_lupa_aumento", 1, _aumento),
-            ("num", "lupa.zona_px", "op_lupa_zona", 20, _entero),
+            ("num", "lupa.zona_px", "op_lupa_zona", 20, _px),
             ("num", "lupa.espera_s", "op_lupa_espera", 1.0, _seg),
         ]
     if pestana == "gestos":
@@ -497,6 +517,18 @@ class VentanaOpciones:
         paginas = len(lista_paginas)
         self.pagina = min(self.pagina, paginas - 1)
         filas = lista_paginas[self.pagina]
+        if paginas > 1:
+            # revisión de la 1.1: se empaca antes que las filas (abajo), así nunca es lo que se recorta
+            nav = tk.Frame(self.cuerpo, bg=T.fondo)
+            nav.pack(side="bottom", fill="x", pady=(6, 0))
+            if self.pagina > 0:
+                self._boton(nav, "◀ " + t("btn_anterior"), "op:pagina:anterior",
+                            lambda: self.ir_pagina(-1)).pack(side="left", padx=4)
+            tk.Label(nav, text=f"{self.pagina + 1} / {paginas}", bg=T.fondo, fg=T.texto,
+                     font=self._f(16)).pack(side="left", expand=True)
+            if self.pagina < paginas - 1:
+                self._boton(nav, t("btn_siguiente") + " ▶", "op:pagina:siguiente",
+                            lambda: self.ir_pagina(1)).pack(side="right", padx=4)
         for ctl in filas:
             self._fila(ctl)
         if self.pestana == "gestos":
@@ -512,17 +544,6 @@ class VentanaOpciones:
         if self.pestana == "puntero" and any(c[1] == "puntero.modo" for c in filas):
             tk.Label(self.cuerpo, text=t("op_modo_ayuda"), bg=T.fondo, fg=T.texto_suave, font=self._f(16, False),
                      wraplength=self.W - 60, justify="left").pack(fill="x", pady=(10, 0))
-        if paginas > 1:
-            nav = tk.Frame(self.cuerpo, bg=T.fondo)
-            nav.pack(side="bottom", fill="x", pady=(6, 0))
-            if self.pagina > 0:
-                self._boton(nav, "◀ " + t("btn_anterior"), "op:pagina:anterior",
-                            lambda: self.ir_pagina(-1)).pack(side="left", padx=4)
-            tk.Label(nav, text=f"{self.pagina + 1} / {paginas}", bg=T.fondo, fg=T.texto,
-                     font=self._f(16)).pack(side="left", expand=True)
-            if self.pagina < paginas - 1:
-                self._boton(nav, t("btn_siguiente") + " ▶", "op:pagina:siguiente",
-                            lambda: self.ir_pagina(1)).pack(side="right", padx=4)
         # 1.1: si la página no cabe a lo alto (pantalla chica, letra grande, pestañas en dos filas),
         # se arma otra vez con una fila menos por página
         if por > 1 and self._no_cabe():
@@ -554,17 +575,16 @@ class VentanaOpciones:
             # botones ocupaba muchas líneas y la pestaña no cabía a lo alto en 1366 × 768)
             tk.Label(fila, text=t(ayuda), bg=T.fondo_2, fg=T.texto_suave, font=self._f(13, False), anchor="w",
                      wraplength=self.W - 80, justify="left").pack(side="bottom", fill="x", padx=10, pady=(0, 4))
-            tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
-                     wraplength=int(self.W * 0.42), justify="left").pack(side="left", padx=10, pady=4, fill="x",
-                                                                        expand=True)
-        else:
-            tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
-                     wraplength=int(self.W * 0.42), justify="left").pack(side="left", padx=10, pady=6, fill="x",
-                                                                        expand=True)
+        # revisión de la 1.1: el nombre se empaca DESPUÉS de los controles y con el ancho que dejan
+        # (con un ancho fijo, en letra grande los botones quedaban aplastados o fuera de la ventana)
+        nombre = tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
+                          justify="left")
+        ctls = tk.Frame(fila, bg=T.fondo_2)      # los controles (menos «vel», que va en su propia línea)
         if tipo == "vel":
-            # 1.1: «◀ Más lento»  3 de 10  «Más rápido ▶», botones de 76 px de alto
+            # 1.1: «◀ Más lento»  3 de 10  «Más rápido ▶», botones de 76 px de alto; en su propia
+            # línea, debajo del nombre (con letra grande no cabían al lado)
             caja = tk.Frame(fila, bg=T.fondo_2)
-            caja.pack(side="right", padx=6, pady=4)
+            caja.pack(side="bottom", padx=6, pady=4)
             caja.grid_rowconfigure(0, minsize=VEL_ALTO_PX)      # alto mínimo, ancho según el texto
             for col, texto, sufijo, signo in ((0, t("op_mas_lento"), "menos", -1),
                                               (2, t("op_mas_rapido"), "mas", +1)):
@@ -575,46 +595,71 @@ class VentanaOpciones:
             v.grid(row=0, column=1, sticky="nsew")
             self.etiquetas_valor[ruta] = (v, ctl)
         elif tipo == "num":
-            self._boton(fila, "+", f"op:{ruta}:mas", lambda: self.cambiar(ctl, +1), ancho=3).pack(side="right",
+            self._boton(ctls, "+", f"op:{ruta}:mas", lambda: self.cambiar(ctl, +1), ancho=3).pack(side="right",
                                                                                                 padx=6, pady=4)
-            v = tk.Label(fila, text="", bg=T.fondo_2, fg=T.acento, font=self._f(18), width=12)
+            v = tk.Label(ctls, text="", bg=T.fondo_2, fg=T.acento, font=self._f(18), width=12)
             v.pack(side="right")
-            self._boton(fila, "−", f"op:{ruta}:menos", lambda: self.cambiar(ctl, -1), ancho=3).pack(side="right",
+            self._boton(ctls, "−", f"op:{ruta}:menos", lambda: self.cambiar(ctl, -1), ancho=3).pack(side="right",
                                                                                                   padx=6, pady=4)
             self.etiquetas_valor[ruta] = (v, ctl)
         elif tipo == "bool":
-            b = self._boton(fila, "", f"op:{ruta}:alternar", lambda: self.cambiar(ctl, 1), ancho=8)
+            b = self._boton(ctls, "", f"op:{ruta}:alternar", lambda: self.cambiar(ctl, 1), ancho=8)
             b.pack(side="right", padx=6, pady=4)
             self.etiquetas_valor[ruta] = (b, ctl)
         elif tipo == "opc":
-            self._boton(fila, "▶", f"op:{ruta}:mas", lambda: self.cambiar(ctl, +1), ancho=3).pack(side="right",
-                                                                                                padx=6, pady=4)
-            v = tk.Label(fila, text="", bg=T.fondo_2, fg=T.acento, font=self._f(16), width=20, wraplength=300)
+            b_mas = self._boton(ctls, "▶", f"op:{ruta}:mas", lambda: self.cambiar(ctl, +1), ancho=3)
+            b_mas.pack(side="right", padx=6, pady=4)
+            # revisión de la 1.1: el valor nunca más ancho de lo que deja la ventana (con letra al 200 %
+            # 20 letras empujaban «◀» fuera)
+            try:
+                b_mas.update_idletasks()
+                bw = b_mas.winfo_reqwidth()
+                car = max(tkfont.Font(root=self.root, font=self._f(16)).measure("0"), 1)
+            except tk.TclError:
+                bw, car = 80, 12
+            letras = max(8, min(20, (self.W - 70 - 2 * (bw + 12)) // car))
+            v = tk.Label(ctls, text="", bg=T.fondo_2, fg=T.acento, font=self._f(16), width=letras,
+                         wraplength=max(letras * car, 120))
             v.pack(side="right")
-            self._boton(fila, "◀", f"op:{ruta}:menos", lambda: self.cambiar(ctl, -1), ancho=3).pack(side="right",
+            self._boton(ctls, "◀", f"op:{ruta}:menos", lambda: self.cambiar(ctl, -1), ancho=3).pack(side="right",
                                                                                                   padx=6, pady=4)
             self.etiquetas_valor[ruta] = (v, ctl)
         elif tipo in ("texto", "atajo"):
             var = tk.StringVar(value=str(leer(self.datos, ruta) or ""))
-            e = tk.Entry(fila, textvariable=var, font=self._f(16, False), width=22, bg="#ffffff", fg="#000000",
+            e = tk.Entry(ctls, textvariable=var, font=self._f(16, False), width=22, bg="#ffffff", fg="#000000",
                          insertbackground="#000000")
             e.pack(side="right", padx=8, pady=6)
             var.trace_add("write", lambda *_a, r=ruta, vv=var: self._texto_cambiado(r, vv))
             self.entradas[ruta] = var
         elif tipo == "boton" and ruta == "camara_ojos":
             # 1.1 paquete C: subir la cámara a 1280 × 720 (el iris se ve mejor)
-            b = self._boton(fila, t("op_ojos_camara_si"), "op:camara_ojos", lambda e=None: self._camara_ojos())
+            b = self._boton(ctls, t("op_ojos_camara_si"), "op:camara_ojos", lambda e=None: self._camara_ojos())
             b.pack(side="right", padx=6, pady=4)
         elif tipo == "boton" and ruta == "probar_alarma":
             # 1.1: «Probar la alarma (3 segundos)»: suena 3 s con la pantalla roja y no cambia nada
-            b = self._boton(fila, "▶", "op:probar_alarma", self._probar_alarma, ancho=4)
+            b = self._boton(ctls, "▶", "op:probar_alarma", self._probar_alarma, ancho=4)
             b.pack(side="right", padx=6, pady=4)
         elif tipo == "boton":
             disponible = hasattr(self.app, "abrir_editor_frases")
-            b = self._boton(fila, "✎", "op:frases", self._editar_frases, ancho=4)
+            b = self._boton(ctls, "✎", "op:frases", self._editar_frases, ancho=4)
             b.pack(side="right", padx=6, pady=4)
             if not disponible:
                 b.configure(fg=T.texto_suave)
+        ocupado = 0
+        if ctls.winfo_children():
+            try:
+                ctls.update_idletasks()
+                ocupado = ctls.winfo_reqwidth() + 12
+            except tk.TclError:
+                ocupado = int(self.W * 0.5)
+            if self.W - ocupado - 70 >= NOMBRE_MIN_PX:
+                ctls.pack(side="right", padx=6)
+            else:
+                # no caben al lado del nombre (letra muy grande): van en su propia línea, a la derecha
+                ctls.pack(side="bottom", anchor="e", padx=6)
+                ocupado = 0
+        nombre.configure(wraplength=max(self.W - ocupado - 70, NOMBRE_MIN_PX))
+        nombre.pack(side="left", padx=10, pady=4 if ayuda else 6, fill="x", expand=True)
         self._pintar_valor(ruta)
 
     def _pintar_valor(self, ruta):
@@ -626,6 +671,10 @@ class VentanaOpciones:
         v = leer(self.datos, ruta)
         if tipo == "vel":
             texto = t("op_velocidad_valor", n=velocidad_de_sens(v))
+        elif ruta == "puntero.ajuste_vertical":
+            # 1.1 (revisión): el porcentaje que de verdad queda (sens_y / sens_x): con el piso y el
+            # techo de sens_y no siempre es el ajuste pedido
+            texto = _ajuste_vertical(ajuste_efectivo(self.datos.get("puntero") or {}, v))
         elif tipo == "bool":
             texto = t("op_si") if v else t("op_no")
             if isinstance(w, BotonGrande):
@@ -642,6 +691,7 @@ class VentanaOpciones:
         if tipo == "vel":
             n = velocidad_de_sens(leer(self.datos, "puntero.sens_x")) + signo
             self._poner_velocidad(n)
+            self._pintar_valor("puntero.ajuste_vertical")     # el porcentaje real puede cambiar
         elif tipo == "num":
             escribir(self.datos, ruta, paso_numero(self.datos, ruta, extra, signo))
             if ruta == "puntero.ajuste_vertical":
@@ -650,7 +700,11 @@ class VentanaOpciones:
         elif tipo == "bool":
             escribir(self.datos, ruta, not bool(leer(self.datos, ruta)))
             if ruta == "emergencia.activa" and not leer(self.datos, ruta):
-                self.app.mostrar_aviso(t("aviso_emergencia_apagada"), 10)
+                gestos = self.datos.get("gestos") or {}
+                con_gesto = any((gestos.get(g) or {}).get("activo") and (gestos.get(g) or {}).get("largo") == "emergencia"
+                                for g in ("boca", "cejas", "sonrisa"))
+                self.app.mostrar_aviso(t("aviso_emergencia_apagada_gesto" if con_gesto else "aviso_emergencia_apagada"),
+                                       10)
         elif tipo == "opc":
             escribir(self.datos, ruta, ciclar(extra, leer(self.datos, ruta), signo))
         self._vista_previa()

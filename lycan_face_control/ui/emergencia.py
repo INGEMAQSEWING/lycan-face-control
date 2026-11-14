@@ -1,7 +1,7 @@
 """Pantalla de emergencia (versión 1.1, paquete B): se pidió AYUDA.
 
 - ``Toplevel`` a pantalla completa en el monitor del puntero, siempre encima.
-- Fondo rojo que alterna entre ``#c00000`` y ``#5a0000`` **una vez por segundo** (menos de tres
+- Fondo rojo que alterna entre ``#b00000`` y ``#5a0000`` **una vez por segundo** (menos de tres
   destellos por segundo: seguro ante las convulsiones, WCAG 2.3.1).
 - «NECESITO AYUDA» en letra de 72 pt o más, en blanco; debajo, «Por favor, que venga {cuidador}.».
 - Un botón grande «Ya me atendieron» (al menos 300 × 120 px), verde sobre fondo oscuro: es el

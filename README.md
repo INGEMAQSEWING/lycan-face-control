@@ -4,7 +4,7 @@
 quedándose quieto o con un gesto (abrir la boca, levantar las cejas) y escriba o hable con un teclado
 grande en pantalla, con voz de Windows que funciona sin internet.
 
-Lycan Developments / EDWIN CNC — versión 1.0.0 — código abierto (licencia MIT), sin costo de licencia.
+Lycan Developments / EDWIN CNC — versión 1.1.0 — código abierto (licencia MIT), sin costo de licencia.
 
 > Está pensado para personas con **ELA** (esclerosis lateral amiotrófica) y otras discapacidades
 > motoras, y para quien las cuida. Nació de una historia de familia: nadie debería tener que pagar
@@ -24,6 +24,12 @@ Lycan Developments / EDWIN CNC — versión 1.0.0 — código abierto (licencia 
 | Escribir y hablar | Abra el **Teclado**: teclas grandes en español (ñ, tildes), sugerencias de palabras, frases rápidas ("Sí", "No", "Tengo sed", "Tengo dolor"…) y los botones Hablar, Escribir, Copiar y Borrar |
 | Si solo puede parpadear | Use el **modo barrido** (vea *Si la persona solo puede parpadear*, abajo): las filas y las teclas se iluminan solas y un **parpadeo largo** elige |
 | Pausar | Mantenga la boca abierta 2 segundos y ciérrela. Para reanudar, ábrala unos 3 segundos y ciérrela, o quédese quieto sobre el botón grande "Reanudar". Un bostezo muy largo, o con los ojos cerrados, no cuenta |
+| **Pedir ayuda** (1.1) | Quédese quieto unos 2,5 segundos sobre el botón rojo **AYUDA** de la barra o del teclado: la pantalla se pone roja, suena una alarma y la voz dice "Necesito ayuda. Por favor, que venga…". Se apaga quedándose quieto 3 segundos sobre **«Ya me atendieron»**; quien cuida puede presionar Esc, hacer clic en ese botón o usar Ctrl+Alt+A |
+| Leer sin hacer clics (1.1) | Elija **Sin clic** en la barra: quedarse quieto no hace clic (los gestos sí). Para volver, elija **Clic** |
+| Clic preciso (1.1) | Elija **Lupa** en la barra y quédese quieto cerca de lo que quiere: aparece esa parte agrandada 3 veces; quédese quieto sobre el punto exacto de la imagen grande para hacer el clic |
+| Esconder la barra o el teclado (1.1) | **Minimizar** los deja como una pestaña en el borde («Barra» o «Teclado»); deje el puntero un momento sobre la pestaña para abrirlos de nuevo (el texto escrito no se borra) |
+| Cambiar la velocidad (1.1) | Opciones › Puntero › **Velocidad del puntero**: «◀ Más lento» / «Más rápido ▶», de 1 a 10 (de fábrica, 3 de 10) |
+| Mover el puntero con los ojos (1.1) | Opciones › Puntero › **Mover el puntero con**: «La cabeza» (de fábrica), «Los ojos» u «Ojos y cabeza (recomendado)». Después hay que calibrar. Con una cámara web el puntero cae a unos 3 a 5 cm de donde mira |
 
 **Los parpadeos naturales nunca hacen nada.** Solo cuenta un parpadeo largo y voluntario (por fábrica,
 0,8 segundos; la calibración lo ajusta a cada persona). Mientras cierra los ojos, una barra se llena y
@@ -37,13 +43,13 @@ se pausa solo, y se reanuda solo cuando la cara vuelve.
 
 ## Instalación
 
-1. Descargue `Lycan-Face-Control-1.0.0-Windows-64-bits.exe` desde la página de descargas
+1. Descargue `Lycan-Face-Control-1.1.0-Windows-64-bits.exe` desde la página de descargas
    (sección *Releases* de este repositorio).
 2. Ábralo. Si Windows dice "Windows protegió su PC", elija **Más información** y luego
    **Ejecutar de todas formas** (el programa no tiene firma digital, que tiene un costo anual).
 3. No pide permiso de administrador. Puede marcar **"Abrir Lycan Face Control al encender el computador"**.
 
-¿Prefiere no instalar? Descargue `Lycan-Face-Control-1.0.0-portable.zip`, descomprímalo y abra
+¿Prefiere no instalar? Descargue `Lycan-Face-Control-1.1.0-portable.zip`, descomprímalo y abra
 `LycanFaceControl.exe`.
 
 **Requisitos:** Windows 10 u 11 de 64 bits, una cámara (la del portátil sirve) y unos 300 MB libres.
@@ -63,9 +69,14 @@ Se abre una bienvenida y luego la **calibración guiada** (unos dos minutos). Ca
 5. **Parpadeo largo** (solo con el barrido o "Solo comunicación"): la persona cierra los ojos hasta
    que la barra se pone verde, tres veces. Si no se logra, la pantalla final lo dice y sugiere qué
    ajustar. Con "Solo comunicación" no se piden los giros de la cabeza.
-6. **Gestos** (puede omitir los que no use). Si la persona no logra hacer un gesto, se deja con el ajuste
+6. **Ojos** (solo si eligió mover el puntero con los ojos; se elige con ◀ ▶ en la primera pantalla de la
+   calibración): mire el punto del centro, siga 9 puntos solo con los ojos, mire el centro mientras
+   mueve la cabeza despacio y mire 4 puntos más para comprobar. Al final la pantalla dice "el puntero
+   cae a unos N cm de donde usted mira". Si los ojos no se ven bien (por ejemplo, un párpado caído),
+   esa parte no se queda esperando: a los 15 segundos sigue y el puntero se mueve con la cabeza.
+7. **Gestos** (puede omitir los que no use). Si la persona no logra hacer un gesto, se deja con el ajuste
    de fábrica y la pantalla final lo dice: así ese gesto no queda más sensible de la cuenta.
-7. **Prueba final**: elija cuatro círculos con la cabeza. Con el barrido, la prueba es el parpadeo largo
+8. **Prueba final**: elija cuatro círculos con la cabeza. Con el barrido, la prueba es el parpadeo largo
    y la ventana se cierra sola.
 
 Se puede repetir cuando quiera desde la ventana principal.
@@ -90,6 +101,10 @@ Se puede repetir cuando quiera desde la ventana principal.
   si es la misma persona (por ejemplo, la acomodaron más cerca), elija «Reanudar».
 - Si la persona voltea la cabeza mucho más allá de lo cómodo (para mirarlo a usted, a la televisión o
   para comer), el puntero se queda quieto y no hace clics hasta que vuelva a mirar la pantalla.
+- **Botón AYUDA**: pruebe la alarma en Opciones › Emergencia › «Probar la alarma (3 segundos)» y deje el
+  volumen de Windows alto (la alarma usa los parlantes del computador; no avisa por internet ni al
+  celular). Ahí también se cambia lo que dice la voz, el volumen y el tiempo quieto sobre AYUDA. Si la
+  detección de la cara se reinicia durante una emergencia, la alarma sigue sonando hasta que alguien la apague.
 - Si dice «No encuentro la cámara» con la cámara conectada, revise en Configuración de Windows ›
   Privacidad y seguridad › Cámara que esté activado «Permitir que las aplicaciones de escritorio accedan
   a la cámara».
@@ -115,6 +130,7 @@ usted las tiene con el ratón.
 | Ctrl+Alt+C | Recentrar (tomar la posición actual como centro) |
 | Ctrl+Alt+Inicio | Mostrar la ventana principal |
 | Ctrl+Alt+Fin | Cerrar el programa |
+| Ctrl+Alt+A | Apagar la alarma de AYUDA (1.1) |
 
 ---
 
@@ -136,8 +152,12 @@ usted las tiene con el ratón.
 
 ## Lo que este programa no puede hacer (con honestidad)
 
-- **No sigue la mirada.** Con una cámara web común no es preciso; para quien no puede mover la cabeza
-  está el modo barrido con parpadeo largo.
+- **Con los ojos no es preciso** (1.1): con una cámara web el puntero cae a unos 3 a 5 cm de donde se mira.
+  Sirve para el teclado, la barra y cruzar la pantalla; para cosas pequeñas use la lupa o «Ojos y cabeza».
+  No es tan preciso como un aparato especial para los ojos. Para quien no puede mover la cabeza ni
+  apuntar con los ojos está el modo barrido con parpadeo largo.
+- **El botón AYUDA no avisa a distancia**: suena en el computador; no manda mensajes por internet ni al
+  celular.
 - Si la persona pierde también el control de los párpados, este programa ya no le sirve: hacen falta
   sistemas especializados (por ejemplo, seguidores de mirada con cámara infrarroja). Consulte con su
   equipo de salud.
@@ -178,7 +198,9 @@ py -3.10 -m pytest -q pruebas                        # pruebas (sin cámara; la 
 Calibrar; mover a las 4 esquinas; clic por permanencia en el escritorio; boca = clic; cejas = clic
 derecho; arrastrar un archivo; desplazar una página; escribir "Hola, ¿cómo está? Ñandú" en el Bloc de
 notas con permanencia y con barrido; hablar una frase; pausar con la boca 2 s y con Ctrl+Alt+Espacio;
-taparse la cara a mitad de un arrastre; luz baja; 30 minutos de uso sin clics fantasma.
+taparse la cara a mitad de un arrastre; luz baja; 30 minutos de uso sin clics fantasma. Versión 1.1:
+pedir AYUDA y apagarla con «Ya me atendieron» y con Ctrl+Alt+A; Sin clic; Lupa; minimizar la barra y el
+teclado; cambiar la velocidad; calibrar y usar «Ojos y cabeza» y «Los ojos».
 
 ---
 
