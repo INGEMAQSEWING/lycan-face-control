@@ -609,6 +609,57 @@ TXT.update({
     "icono_tec_pestana": "⌨",
     "globo_tec_minimizar": "Esconde el teclado sin borrar lo escrito.",
 })
+# ---- 1.1 paquete B: emergencia (botón AYUDA) ----
+# La palabra AYUDA queda solo para la emergencia: las instrucciones pasan a llamarse «Cómo usar».
+TXT.update({
+    "btn_ayuda": "Cómo usar",
+    "tec_ayuda_btn": "Cómo usar",
+    "icono_tec_ayuda_btn": "",          # sin el «?»: «Cómo usar» va en dos líneas, como «Borrar palabra»
+    "barra_ayuda": "AYUDA",
+    "icono_ayuda": "!",
+    "tec_emergencia": "AYUDA",
+    "icono_tec_emergencia": "!",
+    "globo_ayuda_emergencia": "Para pedir ayuda: quédese quieto sobre AYUDA hasta que se llene el círculo.",
+    "aviso_emergencia_quieto": "Para pedir ayuda: quédese quieto sobre AYUDA hasta que se llene el círculo.",
+    "emergencia_titulo": "NECESITO AYUDA",
+    "emergencia_llamando": "Por favor, que venga {cuidador}.",
+    "emergencia_voz": "{mensaje}. Por favor, que venga {cuidador}.",
+    "emergencia_atendido": "Ya me atendieron",
+    "emergencia_como_parar": ("Quédese quieto sobre «Ya me atendieron». Quien cuida puede presionar Esc, hacer "
+                              "clic en ese botón o usar {atajo}."),
+    "emergencia_prueba": "Prueba de la alarma: se apaga sola en 3 segundos.",
+    "aviso_emergencia_fin": "Alarma apagada.",
+    "aviso_alarma_falla": "No pude hacer sonar la alarma. La pantalla roja y la voz siguen.",
+    "aviso_emergencia_apagada": "Sin el botón AYUDA, la persona no podrá pedir ayuda con la cabeza.",
+    "op_tab_emergencia": "Emergencia",
+    "op_pestana_emergencia": "Emergencia",
+    "op_emergencia_activa": "Botón AYUDA (emergencia)",
+    "op_emergencia_mensaje": "Lo que dice la voz cuando pide ayuda",
+    "op_emergencia_volumen": "Volumen de la alarma",
+    "op_emergencia_voz": "Decir el mensaje en voz alta",
+    "op_emergencia_cada": "Repetir el mensaje cada",
+    "op_emergencia_tiempo": "Tiempo quieto sobre AYUDA para pedir ayuda",
+    "op_emergencia_detener": "Tiempo quieto sobre «Ya me atendieron»",
+    "op_emergencia_probar": "Probar la alarma (3 segundos)",
+    "op_emergencia_nota": ("La alarma usa los parlantes del computador: deje el volumen de Windows alto. No envía "
+                           "mensajes por internet."),
+    "op_atajo_emergencia": "Apagar la alarma de AYUDA",
+    "accion_emergencia": "Pedir AYUDA (alarma)",
+    "ayuda_sec_emergencia": "Emergencia",
+    "ayuda_emergencia": ("• Para pedir ayuda: quédese quieto sobre el botón rojo AYUDA de la barra (o del teclado) "
+                         "hasta que se llene el círculo, unos 2 segundos y medio. Pasar por encima no basta. "
+                         "También sirve en pausa y con la barra minimizada (la pestaña tiene su AYUDA).\n"
+                         "• Con barrido: AYUDA está en la primera fila; elíjala con un parpadeo largo como "
+                         "cualquier tecla.\n"
+                         "• Si en Opciones › Gestos un gesto sostenido dice «Pedir AYUDA (alarma)», sostenerlo "
+                         "también la pide. El parpadeo y los gestos cortos nunca piden ayuda.\n"
+                         "• Al pedirla: la pantalla se pone roja, suena una alarma fuerte y la voz dice «{mensaje}». "
+                         "Mientras tanto no se hace ningún clic.\n"
+                         "• Para apagarla: quédese quieto sobre «Ya me atendieron». Quien cuida puede presionar "
+                         "Esc, hacer clic en ese botón o usar {emergencia}.\n"
+                         "• La alarma usa los parlantes del computador: deje el volumen de Windows alto. No avisa "
+                         "por internet ni al celular. Pruébela en Opciones › Emergencia."),
+})
 TXT["ayuda_uso"] = TXT["ayuda_uso"] + (
     "\n• Sin clic: para leer tranquilo; quedarse quieto no hace clic, pero los gestos de clic sí. Para "
     "volver, elija «Clic» en la barra.\n"
@@ -631,8 +682,13 @@ def t(clave: str, **kw) -> str:
     return txt
 
 
+TXT["ayuda_cuidador"] = TXT["ayuda_cuidador"] + (
+    "\n• Botón AYUDA: la persona pide ayuda quedándose quieta sobre él; suena una alarma con la pantalla "
+    "roja. Para apagarla: Esc, un clic en «Ya me atendieron» o {emergencia}. Se prueba en Opciones › Emergencia.")
+
+
 ATAJOS_FABRICA = {"pausar": "Ctrl+Alt+Espacio", "teclado": "Ctrl+Alt+T", "recentrar": "Ctrl+Alt+C",
-                  "ventana": "Ctrl+Alt+Inicio", "salir": "Ctrl+Alt+Fin"}
+                  "ventana": "Ctrl+Alt+Inicio", "salir": "Ctrl+Alt+Fin", "emergencia": "Ctrl+Alt+A"}
 
 
 def atajos_kw(cfg: dict | None) -> dict:

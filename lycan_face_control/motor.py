@@ -284,6 +284,10 @@ class Motor(threading.Thread):
             self.ordenes.put(("recentrar",))
         elif nombre == "salir":
             self.salida.soltar_todo("salir")
+        elif nombre == "emergencia":
+            # 1.1 paquete B: el cuidador apaga la alarma de AYUDA (el sonido ya se calló en el
+            # hilo de atajos); sin emergencia la máquina no hace nada
+            self.ordenes.put(("atendido", "atajo"))
 
     # ------------------------------------------------------------- bucle
     def vuelta(self):
@@ -474,6 +478,11 @@ class Motor(threading.Thread):
             self._aplicar(m.cancelar_lupa(t))
         elif nombre == "lupa_fallo":
             self._aplicar(m.lupa_fallo(t))
+        # ---- 1.1 paquete B: emergencia ----
+        elif nombre == "ayuda":
+            self._aplicar(m.pedir_ayuda(t, arg or "cuidador"))
+        elif nombre == "atendido":
+            self._aplicar(m.atendido(t, arg or "cuidador"))
         elif nombre == "camara_perdida":
             self.salida.soltar_todo("cámara perdida")       # el aviso lo da _vigilar_camara
         elif nombre == "error_externo":

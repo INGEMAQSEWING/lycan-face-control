@@ -41,7 +41,7 @@ import tkinter as tk
 from .. import constantes as K
 from ..barrido import VOLVER, Barrido
 from ..frases import Frases, texto_final
-from ..teclado_logica import (ACCION_MINIMIZAR, ACCIONES_TEXTO_MINIMIZAR, ACCIONES, ACCIONES_TEXTO, MAX_TEXTO, N_RAPIDAS, N_SUGERENCIAS, NUMEROS,
+from ..teclado_logica import (ACCION_EMERGENCIA, ACCION_MINIMIZAR, ACCIONES_TEXTO_MINIMIZAR, ACCIONES, ACCIONES_TEXTO, MAX_TEXTO, N_RAPIDAS, N_SUGERENCIAS, NUMEROS,
                               PUNTUACION_PEGADA, Escritura, buscar_tecla, disposicion, distribucion,
                               nombre_distribucion)
 from .comun import LETRA, BotonGrande, area_de_trabajo, letra, no_activar, tema
@@ -206,7 +206,8 @@ class VentanaTeclado:
         teclas = NUMEROS if self.pagina == "numeros" else self.filas_letras
         self.disp = d = disposicion(teclas, ancho, alto_max, pagina="frases" if self.pagina == "frases" else "letras",
                                     filas_cuerpo=filas_cuerpo,
-                                    acciones_texto=ACCIONES_TEXTO if self._sin_minimizar() else ACCIONES_TEXTO_MINIMIZAR)
+                                    acciones_texto=ACCIONES_TEXTO if self._sin_minimizar() else ACCIONES_TEXTO_MINIMIZAR,
+                                    emergencia=self._con_emergencia())
         h = d.tecla_alto
         w = self.win = tk.Toplevel(self.root)
         w.overrideredirect(True)
@@ -226,6 +227,9 @@ class VentanaTeclado:
         for caja in d.cajas():
             if caja.id == "texto":
                 self._crear_texto(caja)
+                continue
+            if caja.id == f"accion:{ACCION_EMERGENCIA}":
+                self._crear_ayuda(caja)        # 1.1: AYUDA rojo (lo atiende la máquina)
                 continue
             fuente = self.f_accion_fila if caja.id in ids_fila_acciones else self._fuente(caja.id)
             b = BotonGrande(w, "", reg.comando(caja.id), T, fuente)
@@ -257,6 +261,22 @@ class VentanaTeclado:
                 w.withdraw()               # rehecho (Opciones) mientras estaba minimizado: sigue escondido
             except tk.TclError:
                 pass
+
+    # ------------------------------------------------------------ AYUDA (1.1 paquete B)
+    def _con_emergencia(self) -> bool:
+        return bool((self.cfg.get("emergencia") or {}).get("activa", True))
+
+    def _crear_ayuda(self, caja):
+        """Botón AYUDA: objetivo ``teclado:ayuda`` que atiende la máquina (quedarse quieto 2,5 s);
+        con el ratón del cuidador también la pide. En el barrido está en el primer grupo."""
+        reg = self.app.registro
+        b = BotonGrande(self.win, t("tec_emergencia"), reg.comando(K.ID_EMERGENCIA_TECLADO), self.tema,
+                        self.f_accion, icono=t("icono_tec_emergencia"))
+        b.poner_color(self.tema.rojo)
+        b.configure(wraplength=max(caja.ancho - 12, 40))
+        b.place(x=caja.x, y=caja.y, width=caja.ancho, height=caja.alto)
+        reg.agregar(K.ID_EMERGENCIA_TECLADO, b, None, interno=True)
+        self.botones[K.ID_EMERGENCIA_TECLADO] = b
 
     def reconstruir(self):
         """Opciones guardadas (distribución, barrido, tamaño...): se rehace la ventana."""
@@ -560,7 +580,10 @@ class VentanaTeclado:
         rap = [c.id for c in d.fila("rapidas")]
         rap = [i for i in rap if i in activos]
         # Sí y No primero
-        filas.append([i for i in ("frase:si", "frase:no") if i in rap] + [i for i in rap if i not in ("frase:si", "frase:no")])
+        # 1.1: AYUDA en el primer grupo que se ilumina, justo después de Sí y No
+        ayuda = [K.ID_EMERGENCIA_TECLADO] if K.ID_EMERGENCIA_TECLADO in activos else []
+        filas.append([i for i in ("frase:si", "frase:no") if i in rap] + ayuda
+                     + [i for i in rap if i not in ("frase:si", "frase:no")])
         filas.append([c.id for c in d.fila("sugerencias") if c.id in activos])
         for nombre, fila in d.filas:
             if nombre.startswith("cuerpo:"):
@@ -634,6 +657,12 @@ class VentanaTeclado:
 
     def _atender_estado_barrido(self, est):
         self._pintar_barrido(est)
+        if est.elegido == K.ID_EMERGENCIA_TECLADO:
+            # el botón es de la máquina: el barrido le pide la ayuda directamente
+            f = getattr(self.app, "pedir_ayuda", None)
+            if f is not None:
+                f("barrido")
+            return
         if est.elegido and est.elegido != VOLVER:
             self.app.registro.elegir(est.elegido, "cabeza")
 
@@ -689,8 +718,8 @@ class VentanaTeclado:
         if self.barrido is None:
             return
         m = getattr(vista, "maquina", None) if vista is not None else None
-        if m is None or m.estado != K.ACTIVO:
-            # en pausa o sin cara el barrido no avanza (el tiempo no cuenta)
+        if m is None or m.estado != K.ACTIVO or getattr(m, "emergencia", False):
+            # en pausa, sin cara o con la emergencia el barrido no avanza (el tiempo no cuenta)
             self.barrido._t = ahora
             return
         est = self.barrido.actualizar(ahora, bool(m.gestos.ojos_cerrados), None)

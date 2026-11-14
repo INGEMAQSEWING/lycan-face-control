@@ -120,6 +120,11 @@ def check(verbose: bool = True) -> int:
               f"boca {m.mar:.3f}")
 
         decir(f"Voz: {_comprobar_voz()}")
+        # 1.1 paquete B: el sonido de la alarma de AYUDA se arma en memoria (aquí no suena)
+        from .sistema.alarma import generar_wav
+        if len(generar_wav(100)) < 1000:
+            raise RuntimeError("no se pudo armar el sonido de la alarma de AYUDA")
+        decir("Alarma de AYUDA: bien (en esta prueba no suena)")
         decir("--check correcto")
         return 0
     except Exception as e:  # noqa: BLE001

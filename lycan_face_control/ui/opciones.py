@@ -17,7 +17,7 @@ import tkinter as tk
 
 from .. import constantes as K
 from ..config import OPCIONES, RANGOS, por_defecto, validar
-from .comun import BotonGrande, area_libre, boton_ayuda, letra, tema
+from .comun import BotonGrande, acomodar_pestanas, area_libre, boton_ayuda, letra, tema
 from .textos import nombre_accion, t
 
 log = logging.getLogger("lycan")
@@ -27,6 +27,8 @@ VELOCIDAD_MIN, VELOCIDAD_MAX = 1, 10
 ACCIONES_PARPADEO = ("ninguna", "clic", "clic_izq", "clic_der", "doble", "pausar", "teclado", "recentrar")
 ACCIONES_GESTO_UI = ("ninguna", "clic", "clic_izq", "clic_der", "doble", "arrastrar", "pausar", "teclado",
                      "recentrar", "borrar", "hablar", "siguiente")
+# 1.1 paquete B: «Pedir AYUDA (alarma)» solo en el gesto LARGO (nunca en el corto ni en el parpadeo)
+ACCIONES_GESTO_LARGO_UI = ACCIONES_GESTO_UI + ("emergencia",)
 
 
 # ------------------------------------------------------------------ velocidad del puntero (1 a 10)
@@ -147,6 +149,17 @@ def _aumento(v):
 
 
 PESTANAS = ("puntero", "clic", "gestos", "teclado", "comodidad", "atajos")
+# 1.1 paquete B: pestaña «Emergencia» (botón AYUDA)
+PESTANAS = PESTANAS + ("emergencia",)
+NOMBRES_ATAJOS = ("pausar", "teclado", "recentrar", "ventana", "salir", "emergencia")
+
+
+def _segundos_enteros(v):
+    return t("op_segundos", n=int(round(float(v))))
+
+
+def _volumen(v):
+    return t("op_porcentaje", n=int(round(float(v))))
 
 
 def controles(pestana: str, gesto: str = "boca") -> list:
@@ -186,7 +199,7 @@ def controles(pestana: str, gesto: str = "boca") -> list:
             ("num", f"{b}.sens", "op_gesto_sens", 0.1, _veces),
             ("num", f"{b}.sostener_ms", "op_gesto_sostener", 50, _ms),
             ("opc", f"{b}.corto", "op_gesto_corto", ACCIONES_GESTO_UI, nombre_accion),
-            ("opc", f"{b}.largo", "op_gesto_largo", ACCIONES_GESTO_UI, nombre_accion),
+            ("opc", f"{b}.largo", "op_gesto_largo", ACCIONES_GESTO_LARGO_UI, nombre_accion),
         ]
     if pestana == "teclado":
         return [
@@ -225,8 +238,18 @@ def controles(pestana: str, gesto: str = "boca") -> list:
             ("opc", "arranque.estado", "op_arranque", OPCIONES["arranque.estado"], lambda v: t(f"op_arranque_{v}")),
         ]
     if pestana == "atajos":
-        return [("atajo", f"atajos.{n}", f"op_atajo_{n}", None, None)
-                for n in ("pausar", "teclado", "recentrar", "ventana", "salir")]
+        return [("atajo", f"atajos.{n}", f"op_atajo_{n}", None, None) for n in NOMBRES_ATAJOS]
+    if pestana == "emergencia":
+        return [
+            ("bool", "emergencia.activa", "op_emergencia_activa", None, None),
+            ("boton", "probar_alarma", "op_emergencia_probar", None, None),
+            ("texto", "emergencia.mensaje", "op_emergencia_mensaje", None, None),
+            ("num", "emergencia.volumen", "op_emergencia_volumen", 10, _volumen),
+            ("bool", "emergencia.repetir_voz", "op_emergencia_voz", None, None),
+            ("num", "emergencia.repetir_s", "op_emergencia_cada", 1, _segundos_enteros),
+            ("num", "emergencia.permanencia_s", "op_emergencia_tiempo", 0.5, _seg),
+            ("num", "emergencia.detener_s", "op_emergencia_detener", 0.5, _seg),
+        ]
     return []
 
 
@@ -354,17 +377,27 @@ class VentanaOpciones:
         T = self.tema
         self.entradas = {}
         self.etiquetas_valor = {}
-        tabs = tk.Frame(self.win, bg=T.fondo)
-        tabs.pack(fill="x", padx=10, pady=(10, 4))
+        arriba = tk.Frame(self.win, bg=T.fondo)
+        arriba.pack(fill="x", padx=10, pady=(10, 4))
+        ayuda = boton_ayuda(arriba, t("op_ayuda"), self.original, T)
+        ayuda.pack(side="right", padx=(6, 0), anchor="n")
+        tabs = tk.Frame(arriba, bg=T.fondo)
+        tabs.pack(side="left", fill="x", expand=True)
+        botones = []
         for p in PESTANAS:
             b = self._boton(tabs, t(f"op_tab_{p}"), f"op:tab:{p}", lambda p=p: self.ir_a(p))
-            b.pack(side="left", expand=True, fill="x", padx=3)
             b.activo(p == self.pestana)
-        boton_ayuda(tabs, t("op_ayuda"), self.original, T).pack(side="left", padx=(6, 0))
-        self.cuerpo = tk.Frame(self.win, bg=T.fondo)
-        self.cuerpo.pack(fill="both", expand=True, padx=14, pady=6)
+            botones.append(b)
+        # 1.1: con 7 pestañas no caben en una fila en 1366 × 768: van en dos
+        ayuda.update_idletasks()
+        acomodar_pestanas(tabs, botones, self.W - 20 - ayuda.winfo_reqwidth() - 6)
+        # 1.1: «Guardar / Cancelar» se ubica antes que el cuerpo: si algo no cabe, se acorta el
+        # cuerpo (que pasa a más páginas), nunca desaparecen los botones de abajo
         abajo = tk.Frame(self.win, bg=T.fondo)
         abajo.pack(fill="x", side="bottom", padx=10, pady=10)
+        self.cuerpo = tk.Frame(self.win, bg=T.fondo)
+        self.cuerpo.pack(fill="both", expand=True, padx=14, pady=6)
+        self._arriba, self._abajo = arriba, abajo
         if self.confirmando:
             tk.Label(abajo, text=t("op_fabrica_pregunta"), bg=T.fondo, fg=T.texto, font=self._f(16),
                      wraplength=self.W - 40, justify="left").pack(fill="x", pady=(0, 6))
@@ -395,13 +428,17 @@ class VentanaOpciones:
                 b = self._boton(sel, t(f"gesto_{g}"), f"op:gesto:{g}", lambda g=g: self.elegir_gesto(g))
                 b.pack(side="left", expand=True, fill="x", padx=3)
                 b.activo(g == self.gesto)
+        if self.pestana == "emergencia" and self.pagina == 0:
+            tk.Label(self.cuerpo, text=t("op_emergencia_nota"), bg=T.fondo, fg=T.texto_suave,
+                     font=self._f(16, False), wraplength=self.W - 60, justify="left").pack(fill="x", pady=(0, 8))
         if self.pestana == "atajos":
             tk.Label(self.cuerpo, text=t("op_atajos_ayuda"), bg=T.fondo, fg=T.texto_suave, font=self._f(16, False),
                      wraplength=self.W - 60, justify="left").pack(fill="x", pady=(0, 8))
         todos = controles(self.pestana, self.gesto)
-        paginas = max((len(todos) + FILAS_POR_PAGINA - 1) // FILAS_POR_PAGINA, 1)
+        por = self._filas_pagina()
+        paginas = max((len(todos) + por - 1) // por, 1)
         self.pagina = min(self.pagina, paginas - 1)
-        filas = todos[self.pagina * FILAS_POR_PAGINA:(self.pagina + 1) * FILAS_POR_PAGINA]
+        filas = todos[self.pagina * por:(self.pagina + 1) * por]
         for ctl in filas:
             self._fila(ctl)
         if self.pestana == "gestos":
@@ -428,6 +465,25 @@ class VentanaOpciones:
             if self.pagina < paginas - 1:
                 self._boton(nav, t("btn_siguiente") + " ▶", "op:pagina:siguiente",
                             lambda: self.ir_pagina(1)).pack(side="right", padx=4)
+        # 1.1: si la página no cabe a lo alto (pantalla chica, letra grande, pestañas en dos filas),
+        # se arma otra vez con una fila menos por página
+        if por > 1 and self._no_cabe():
+            self._por_pagina[(self.pestana, self.gesto)] = por - 1
+            self._armar_cuerpo()
+
+    def _filas_pagina(self) -> int:
+        if not hasattr(self, "_por_pagina"):
+            self._por_pagina = {}
+        return self._por_pagina.get((self.pestana, self.gesto), FILAS_POR_PAGINA)
+
+    def _no_cabe(self) -> bool:
+        try:
+            self.win.update_idletasks()
+            alto = (self.H - self._arriba.winfo_reqheight() - self._abajo.winfo_reqheight()
+                    - (10 + 4) - 2 * 10 - 2 * 6)
+            return self.cuerpo.winfo_reqheight() > alto
+        except (tk.TclError, AttributeError):
+            return False
 
     def _fila(self, ctl):
         tipo, ruta, clave, extra, fmt = ctl
@@ -436,12 +492,13 @@ class VentanaOpciones:
         fila.pack(fill="x", pady=3)
         ayuda = AYUDAS_CONTROL.get(ruta)
         if ayuda:
-            izq = tk.Frame(fila, bg=T.fondo_2)
-            izq.pack(side="left", padx=10, pady=4, fill="x", expand=True)
-            tk.Label(izq, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
-                     wraplength=int(self.W * 0.42), justify="left").pack(fill="x")
-            tk.Label(izq, text=t(ayuda), bg=T.fondo_2, fg=T.texto_suave, font=self._f(13, False), anchor="w",
-                     wraplength=int(self.W * 0.42), justify="left").pack(fill="x")
+            # 1.1 paquete B: la ayuda corta va debajo, a todo el ancho de la fila (al lado de los
+            # botones ocupaba muchas líneas y la pestaña no cabía a lo alto en 1366 × 768)
+            tk.Label(fila, text=t(ayuda), bg=T.fondo_2, fg=T.texto_suave, font=self._f(13, False), anchor="w",
+                     wraplength=self.W - 80, justify="left").pack(side="bottom", fill="x", padx=10, pady=(0, 4))
+            tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
+                     wraplength=int(self.W * 0.42), justify="left").pack(side="left", padx=10, pady=4, fill="x",
+                                                                        expand=True)
         else:
             tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
                      wraplength=int(self.W * 0.42), justify="left").pack(side="left", padx=10, pady=6, fill="x",
@@ -486,6 +543,10 @@ class VentanaOpciones:
             e.pack(side="right", padx=8, pady=6)
             var.trace_add("write", lambda *_a, r=ruta, vv=var: self._texto_cambiado(r, vv))
             self.entradas[ruta] = var
+        elif tipo == "boton" and ruta == "probar_alarma":
+            # 1.1: «Probar la alarma (3 segundos)»: suena 3 s con la pantalla roja y no cambia nada
+            b = self._boton(fila, "▶", "op:probar_alarma", self._probar_alarma, ancho=4)
+            b.pack(side="right", padx=6, pady=4)
         elif tipo == "boton":
             disponible = hasattr(self.app, "abrir_editor_frases")
             b = self._boton(fila, "✎", "op:frases", self._editar_frases, ancho=4)
@@ -526,6 +587,8 @@ class VentanaOpciones:
                 self._poner_velocidad(velocidad_de_sens(leer(self.datos, "puntero.sens_x")))
         elif tipo == "bool":
             escribir(self.datos, ruta, not bool(leer(self.datos, ruta)))
+            if ruta == "emergencia.activa" and not leer(self.datos, ruta):
+                self.app.mostrar_aviso(t("aviso_emergencia_apagada"), 10)
         elif tipo == "opc":
             escribir(self.datos, ruta, ciclar(extra, leer(self.datos, ruta), signo))
         self._vista_previa()
@@ -542,7 +605,8 @@ class VentanaOpciones:
         if ruta.startswith("atajos."):
             escribir(self.datos, ruta, valor.strip())
         else:
-            escribir(self.datos, ruta, valor.strip()[:40])
+            from ..config import LARGO_TEXTO
+            escribir(self.datos, ruta, valor.strip()[:LARGO_TEXTO.get(ruta, 40)])
 
     def _vista_previa(self):
         """Los cambios llegan al motor al instante (sin guardar)."""
@@ -568,6 +632,12 @@ class VentanaOpciones:
         self.gesto = g
         self.pagina = 0
         self._armar_cuerpo()
+
+    def _probar_alarma(self):
+        f = getattr(self.app, "probar_alarma", None)
+        if f is not None:
+            # con el volumen que se está eligiendo (aunque todavía no se haya guardado)
+            f(int(leer(self.datos, "emergencia.volumen") or 100))
 
     def _editar_frases(self):
         f = getattr(self.app, "abrir_editor_frases", None)

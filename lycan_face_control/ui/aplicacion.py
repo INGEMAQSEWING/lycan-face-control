@@ -77,6 +77,16 @@ class App:
         self.editor = None
         self.lupa = None                       # 1.1: ventana de la lupa abierta (o None)
         self._t_lupa = None
+        # 1.1 paquete B: emergencia (pantalla roja, alarma y voz)
+        self.emergencia = None                 # VentanaEmergencia abierta (o None)
+        self._emergencia_local = False         # abierta por la interfaz con el motor caído
+        self._t_emergencia = None
+        self._plan_alarma = None
+        self._que_suena = None
+        self._ciclo_voz = 0
+        self._alarma_callada = False
+        self._loop_alarma = None
+        self.alarma = None                     # se crea la primera vez (sistema/alarma.py)
         self._avisado_tec_minimizar = False
         self.ultima_vista = None
         self.oyentes_vista: list = []
@@ -195,6 +205,16 @@ class App:
 
     # ------------------------------------------------------------ órdenes
     def orden(self, nombre, *args):
+        # 1.1 paquete B: AYUDA y «Ya me atendieron» con el ratón. Si la detección está caída, la
+        # interfaz abre (o cierra) la emergencia sin esperar al motor.
+        if nombre == "elegir" and args and args[0] in K.IDS_EMERGENCIA and not self._motor_funciona():
+            self.abrir_emergencia("cuidador", local=True)
+            return
+        if nombre == "elegir" and args and args[0] == K.ID_ATENDIDO:
+            self._callar_alarma()
+            if self._emergencia_local or not self._motor_funciona():
+                self.cerrar_emergencia()
+                return
         if nombre == "config" and args and getattr(self.args, "camara", None) is not None:
             try:
                 args[0]["camara"]["indice"] = int(self.args.camara)
@@ -524,6 +544,217 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    # ------------------------------------------------------------ emergencia (1.1 paquete B)
+    def _motor_funciona(self) -> bool:
+        m = self.motor
+        if m is None or self.motor_rendido:
+            return False
+        try:
+            return bool(m.is_alive())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def pedir_ayuda(self, origen: str = "cuidador"):
+        """AYUDA desde la interfaz (el barrido del teclado). La pide la máquina; con la detección
+        caída se abre la pantalla roja directamente."""
+        if self._motor_funciona():
+            self.orden("ayuda", origen)
+        else:
+            self.abrir_emergencia(origen, local=True)
+
+    def apagar_emergencia(self, origen: str = "cuidador"):
+        """Esc en la pantalla roja: la alarma se calla ya y la máquina vuelve a como estaba."""
+        self._callar_alarma()
+        if self.emergencia is not None and (self.emergencia.prueba or self._emergencia_local
+                                            or not self._motor_funciona()):
+            self.cerrar_emergencia()
+            return
+        self.orden("atendido", origen)
+
+    def _nueva_alarma(self, volumen):
+        if not self.sistema or self.simulada:
+            from ..sistema.alarma import AlarmaMuda
+            return AlarmaMuda(volumen)          # pruebas, --simular y capturas: nunca suena
+        from ..sistema.alarma import Alarma
+        return Alarma(volumen)
+
+    def _obtener_alarma(self, volumen=None):
+        vol = self.cfg.datos.get("emergencia", {}).get("volumen", 100) if volumen is None else volumen
+        if self.alarma is None:
+            self.alarma = self._nueva_alarma(vol)
+        self.alarma.volumen = vol
+        return self.alarma
+
+    def _callar_alarma(self):
+        """Seguro desde cualquier hilo (el atajo del cuidador la calla en el hilo de atajos)."""
+        self._alarma_callada = True
+        a = self.alarma
+        if a is not None:
+            try:
+                a.detener()
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudo detener la alarma")
+
+    def _monitor_emergencia(self) -> tuple:
+        """El monitor donde está el puntero (el del mapeo); si no se sabe, el principal."""
+        mon = getattr(getattr(getattr(self.motor, "maquina", None), "mapeo", None), "monitor", None)
+        if mon is None:
+            mon = getattr(self.motor, "monitor", None)
+        try:
+            if mon is not None:
+                return tuple(int(v) for v in mon.rect)
+        except (AttributeError, TypeError, ValueError):
+            pass
+        try:
+            return (0, 0, int(self.root.winfo_screenwidth()), int(self.root.winfo_screenheight()))
+        except Exception:  # noqa: BLE001
+            return (0, 0, 1366, 768)
+
+    def _hay_voz(self) -> bool:
+        if self.voz is None and self.sistema and not self.simulada:
+            self._crear_voz()
+        return self.voz is not None and getattr(self.voz, "voz_espanol", True) is not False
+
+    def abrir_emergencia(self, origen: str = "", local: bool = False, prueba: bool = False, volumen=None):
+        """Abre la pantalla roja y arranca la alarma y la voz. ``prueba``: 3 segundos, sin voz y
+        sin cambiar el estado del programa."""
+        if self.root is None or self.cerrando:
+            return None
+        e = self.emergencia
+        if e is not None and e.viva():
+            if e.prueba and not prueba:
+                self.cerrar_emergencia(avisar=False)   # una emergencia de verdad reemplaza la prueba
+            else:
+                return e
+        from .. import emergencia as E
+        from .emergencia import VentanaEmergencia
+        try:
+            self.cerrar_lupa()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.emergencia = VentanaEmergencia(self.root, self, self._monitor_emergencia(), prueba=prueba,
+                                                al_cerrar=self._emergencia_cerrada)
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo abrir la pantalla de emergencia")
+            self.emergencia = None
+        self._emergencia_local = bool(local) and not prueba
+        self._t_emergencia = time.monotonic()
+        c = self.cfg.datos.get("emergencia", {})
+        ahora = time.monotonic()
+        if prueba:
+            self._plan_alarma = E.PlanAlarma(ahora, repetir_voz=False)
+        else:
+            mensaje = E.mensaje_voz(self.cfg.datos)
+            self._mensaje_emergencia = mensaje
+            self._plan_alarma = E.PlanAlarma(ahora, bool(c.get("repetir_voz", True)), c.get("repetir_s", 12),
+                                             E.duracion_voz(mensaje), hay_voz=self._hay_voz())
+            log.info("Emergencia: pantalla roja y alarma (%s)", origen or "botón")
+        self._obtener_alarma(volumen)
+        self._que_suena = None
+        self._ciclo_voz = 0
+        self._alarma_callada = False
+        self._paso_alarma()
+        return self.emergencia
+
+    def probar_alarma(self, volumen=None):
+        """Opciones › Emergencia › «Probar la alarma (3 segundos)»."""
+        return self.abrir_emergencia("prueba", prueba=True, volumen=volumen)
+
+    def _paso_alarma(self):
+        """Cada 200 ms con la pantalla roja abierta: alarma, voz o silencio según el plan."""
+        self._loop_alarma = None
+        e, plan = self.emergencia, self._plan_alarma
+        if e is None or plan is None or not e.viva() or self.cerrando:
+            return
+        from .. import emergencia as E
+        ahora = time.monotonic()
+        que = plan.que_toca(ahora)
+        alarma = self.alarma
+        if self._alarma_callada:
+            que = E.SILENCIO
+        if que != self._que_suena:
+            self._que_suena = que
+            if que == E.ALARMA and alarma is not None:
+                try:
+                    ok = alarma.tocar()
+                except Exception:  # noqa: BLE001
+                    log.exception("La alarma falló")
+                    ok = False
+                if not ok:
+                    plan.hay_alarma = False
+                    self._que_suena = E.SILENCIO
+                    self.mostrar_aviso(t("aviso_alarma_falla"), 10)
+            elif alarma is not None:
+                try:
+                    alarma.detener()
+                except Exception:  # noqa: BLE001
+                    log.exception("No se pudo detener la alarma")
+        if que == E.VOZ:
+            n = plan.ciclo(ahora)
+            if n != self._ciclo_voz:
+                self._ciclo_voz = n
+                self._decir_emergencia(getattr(self, "_mensaje_emergencia", ""))
+        try:
+            self._loop_alarma = self.root.after(200, self._paso_alarma)
+        except Exception:  # noqa: BLE001
+            self._loop_alarma = None
+
+    def _decir_emergencia(self, texto: str):
+        if not texto or self.voz is None:
+            return
+        try:
+            f = getattr(self.voz, "hablar", None)
+            if f is not None:
+                f(texto, urgente=True) if _acepta_urgente(f) else f(texto)
+        except Exception:  # noqa: BLE001
+            log.exception("La voz de la emergencia falló")
+
+    def _emergencia_cerrada(self, ventana):
+        """La ventana se cerró (prueba terminada, Esc en la prueba o cerrar_emergencia)."""
+        if self.emergencia is ventana:
+            self.emergencia = None
+            self._plan_alarma = None
+            self._emergencia_local = False
+            self._callar_alarma()
+
+    def cerrar_emergencia(self, avisar: bool = True):
+        e = self.emergencia
+        self._callar_alarma()
+        if self._loop_alarma is not None and self.root is not None:
+            try:
+                self.root.after_cancel(self._loop_alarma)
+            except Exception:  # noqa: BLE001
+                pass
+            self._loop_alarma = None
+        if e is None:
+            return
+        prueba = e.prueba
+        self.emergencia = None
+        self._plan_alarma = None
+        self._emergencia_local = False
+        try:
+            e.cerrar()
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo cerrar la pantalla de emergencia")
+        if avisar and not prueba:
+            self.mostrar_aviso(t("aviso_emergencia_fin"), 5)
+
+    def _revisar_emergencia(self, m):
+        """Por si se pierde un aviso: la pantalla roja sigue a la máquina (se abre si la máquina
+        está en emergencia y se cierra si ya no lo está), salvo la de prueba o la abierta con la
+        detección caída."""
+        if m is None or self.motor_rendido:
+            return
+        e = self.emergencia
+        viva = e is not None and e.viva()
+        if getattr(m, "emergencia", False):
+            if not viva:
+                self.abrir_emergencia("vista")
+        elif viva and not e.prueba and not self._emergencia_local and self._t_emergencia is not None \
+                and time.monotonic() - self._t_emergencia > 1.5:
+            self.cerrar_emergencia()
+
     # ------------------------------------------------------------ voz
     def hablar(self, texto: str, urgente: bool = False):
         if urgente:
@@ -601,7 +832,9 @@ class App:
             from ..sistema.atajos import HiloAtajos
             self.atajos = HiloAtajos(self.cfg.datos["atajos"], self.cola_atajos,
                                      directos={"pausar": lambda: self.motor.atajo("pausar"),
-                                               "salir": lambda: self.motor.atajo("salir")})
+                                               "salir": lambda: self.motor.atajo("salir"),
+                                               # 1.1: la alarma se calla ya, en el hilo de atajos
+                                               "emergencia": self._atajo_emergencia})
             self.atajos.start()
             self.root.after(800, self._avisar_atajos)
         except Exception:  # noqa: BLE001
@@ -622,7 +855,19 @@ class App:
         if self.atajos is not None and self.atajos.fallidos:
             self.mostrar_aviso(t("aviso_atajos") + "\n" + "\n".join(txt for _, txt in self.atajos.fallidos), 10)
 
+    def _atajo_emergencia(self):
+        """En el hilo de atajos: callar la alarma y avisar a la máquina (corto y seguro)."""
+        self._callar_alarma()
+        self.motor.atajo("emergencia")
+
     def _atender_atajo(self, nombre: str):
+        if nombre == "emergencia":
+            # la máquina ya recibió «atendido» (hilo de atajos); con el motor caído, la prueba o la
+            # pantalla abierta por la interfaz, se cierra aquí
+            e = self.emergencia
+            if e is not None and (e.prueba or self._emergencia_local or not self._motor_funciona()):
+                self.cerrar_emergencia()
+            return
         if nombre == "pausar":
             # ya se atendió en el hilo de atajos (suelta todo al instante); si la detección se
             # había rendido, el atajo del cuidador la vuelve a intentar ya
@@ -765,6 +1010,7 @@ class App:
                 pass
             self.flotante.actualizar(m is not None and m.estado == K.PAUSA and escondida)
         self._revisar_lupa(m)
+        self._revisar_emergencia(m)
         if m is not None:
             self.registro.resaltar(m.objetivo)
         for f in list(self.oyentes_vista):
@@ -806,6 +1052,13 @@ class App:
         clave = a.clave
         if clave == "teclado":
             self.alternar_teclado()
+            return
+        # ---- 1.1 paquete B: emergencia ----
+        if clave == "emergencia":
+            self.abrir_emergencia(a.texto)
+            return
+        if clave == "emergencia_fin":
+            self.cerrar_emergencia()
             return
         if clave == "fatal":
             self.mostrar_aviso(t("aviso_fatal"), 8)
@@ -1010,6 +1263,10 @@ class App:
             self.cerrar_lupa()
         except Exception:  # noqa: BLE001
             pass
+        try:
+            self.cerrar_emergencia(avisar=False)
+        except Exception:  # noqa: BLE001
+            pass
         for w in (self.indicador, self.borde, self.flotante):
             try:
                 if w is not None:
@@ -1025,6 +1282,7 @@ class App:
     def finalizar(self):
         """Soltar todo -> detener el motor -> atajos -> voz -> sonidos -> guardar."""
         self.cerrando = True
+        self._callar_alarma()                   # 1.1: la alarma nunca queda sonando al salir
         self._soltar_seguro("fin")
         try:
             self.motor.detener()

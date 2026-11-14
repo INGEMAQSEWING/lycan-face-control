@@ -303,6 +303,7 @@ Cada paso tiene instrucciones grandes, voz opcional (apagada por defecto en la c
 
 - Arranque: en `ACTIVO` o `PAUSA` según `arranque.estado` (por defecto `ACTIVO` si ya hay calibración, `PAUSA` si no). Con `--minimizado` igual.
 - **Pausa automática**: si se pausó por falta de cara, al volver la cara estable 1 s se reanuda solo. Si se pausó a propósito, no.
+- **Emergencia (1.1 paquete B)**: no es un estado más sino una marca (`Maquina.emergencia`) que vale encima de `ACTIVO` o `PAUSA`. Se pide quedándose quieto `emergencia.permanencia_s` (2,5 s) sobre un botón AYUDA (`barra:ayuda`, `pestana:ayuda`, `teclado:ayuda`; también en `PAUSA`, incluida la del cuidador y la automática, y en Sin clic, Lupa, `DESPLAZAR` con el puntero virtual y `ARRASTRANDO`), con el barrido (AYUDA está en el primer grupo), con el **gesto largo** asignado a `emergencia` (en `ACTIVO`, en `PAUSA` y mirando afuera) o con el ratón del cuidador. Al pedirla: `Subir` del arrastre si lo hay, `SoltarTodo("emergencia")`, se sale de los submodos con botón (arrastre, desplazar, lupa), `Aviso("emergencia", origen)` y el registro anota "Emergencia activada (origen)" sin ningún texto de la persona. Mientras dura: el puntero sigue a la cabeza (`Mover`) pero **ningún** clic, botón ni rueda llega a Windows; lo único elegible es `emergencia:atendido` (`emergencia.detener_s`, 3 s; bloqueado al empezar si el puntero ya estaba encima); la cara perdida y "mirando afuera" no la detienen. Se apaga con «Ya me atendieron», Esc, el clic del cuidador o `atajos.emergencia`: `SoltarTodo`, `Aviso("emergencia_fin")`, vuelve a como estaba (ACTIVO o PAUSA, con el submodo de teclado/barrido), los AYUDA quedan bloqueados hasta que el puntero salga de ellos y un gesto en curso no hace nada al soltarlo. **No piden ayuda**: un parpadeo natural o largo (fuera del barrido), un gesto corto (la validación lo impide), un gesto de clic sobre el botón (avisa "quédese quieto sobre AYUDA") ni pasar por encima.
 
 ### 5.2 Submodos de `ACTIVO`
 | Submodo | Entrada | Comportamiento | Salida |
@@ -324,7 +325,7 @@ Cada paso tiene instrucciones grandes, voz opcional (apagada por defecto en la c
 - Clic izquierdo y derecho: `Bajar` y `Subir` en el **mismo** `SendInput` (nunca queda presionado).
 
 ### 5.4 Gestos y sus acciones (asignables en Opciones)
-Acciones posibles: `ninguna`, `clic` (= `modo_clic` actual), `clic_izq`, `clic_der`, `doble`, `arrastrar`, `pausar` (alterna), `teclado`, `recentrar`, `borrar` (en el teclado), `elegir` (barrido), `hablar` (teclado).
+Acciones posibles: `ninguna`, `clic` (= `modo_clic` actual), `clic_izq`, `clic_der`, `doble`, `arrastrar`, `pausar` (alterna), `teclado`, `recentrar`, `borrar` (en el teclado), `elegir` (barrido), `hablar` (teclado). 1.1: `emergencia` («Pedir AYUDA (alarma)»), **solo en el gesto largo** de boca, cejas o sonrisa; un gesto corto con `emergencia` pasa a `ninguna` al validar y el parpadeo nunca la ofrece (un parpadeo largo de sueño no debe hacer sonar una alarma de noche).
 | Gesto | Corto (por defecto) | Largo 2 s (por defecto) |
 |---|---|---|
 | Boca abierta | `clic` | `pausar` |
@@ -356,6 +357,7 @@ Principios: todo se puede usar **solo con la cabeza** (cada control propio es un
 - Posición: derecha en vertical (por defecto), izquierda, arriba, abajo; se aparta del borde 8 px; siempre encima.
 - Elegir un botón = permanencia por objetivo (`barra.permanencia_s`, 1,0 por defecto) o gesto de clic con el puntero encima. **Nunca** hace clic en lo que está detrás.
 - 1.1: también **Sin clic** (⊘), **Lupa** (⊕) y **Minimizar** (▁) al final (los dos primeros se pueden quitar: `barra.boton_sin_clic`, `barra.boton_lupa`). Si no caben en una columna (o fila) sin bajar de 72 px, se arman en **dos columnas**, de arriba abajo y luego al lado (`medidas_barra` devuelve también las columnas). Con el teclado abierto la barra no muestra Sin clic ni Lupa (cabe en una columna y el teclado conserva su ancho).
+- 1.1 paquete B: **AYUDA** (`!`, rojo con texto negro) siempre al final, con doble separación antes (`medidas_barra(..., extra=12)`). Se elige con `emergencia.permanencia_s` (2,5 s), lo pone la máquina aunque la interfaz publique otro tiempo. La pestaña de la barra minimizada lleva también su AYUDA (al menos 72 × 72 px, debajo de «Barra» o a su lado). Con `emergencia.activa = false` no aparece en ningún lado.
 - **Minimizar** esconde la barra y deja la pestaña «Barra» en el mismo borde (al menos 56 × 120 px, o 120 × 56 en horizontal, letra de 18 pt). Quieto **0,6 s** sobre la pestaña (`ui:barra_mostrar`, también en `PAUSA`) o el ratón del cuidador la abren. Lo minimizado **no se guarda**: al abrir manda `barra.visible` ("Mostrar la barra al abrir"). En `DESPLAZAR` no hay Minimizar y la barra siempre se ve ("Terminar").
 
 ### 6.3 Indicador del cursor (`ui/indicador.py`)
@@ -365,10 +367,16 @@ Toplevel sin bordes, atravesable, siempre encima, junto al cursor: anillo de per
 Ventana grande (por defecto la mitad inferior de la pantalla; se puede mover arriba), con: área de texto (letra 28 pt), fila de sugerencias, filas de teclas, fila de acciones, panel de frases rápidas (pestaña o columna), botones **Sí** y **No** grandes y separados siempre visibles.
 - 1.1: **Minimizar** (arriba a la derecha, junto a Hablar/Repetir/Escribir) esconde el teclado sin borrar lo escrito, vuelve a `NORMAL` y deja la pestaña «Teclado» (al menos 160 × 56 px) en su borde. Quieto 0,6 s sobre la pestaña (`ui:teclado_mostrar`), «Teclado» en la barra o el atajo lo **restauran** con el texto tal como estaba. «Cerrar» sigue cerrando. Con barrido o «Solo comunicación» **no se ofrece** (ni en la ventana ni en el barrido).
 
+- 1.1 paquete B: **AYUDA** rojo a la izquierda de la caja del texto (primera fila), objetivo `teclado:ayuda` (2,5 s quieto). En el barrido está en el **primer grupo**, justo después de Sí y No. «Ayuda» (las instrucciones) pasa a llamarse **«Cómo usar»**, sin el «?», en dos líneas como «Borrar palabra».
+
+### 6.4.1 Pantalla de emergencia (`ui/emergencia.py`, 1.1 paquete B)
+`Toplevel` a pantalla completa en el monitor del mapeo, siempre encima; fondo `#c00000` / `#5a0000` alternando **una vez por segundo** (WCAG 2.3.1); «NECESITO AYUDA» (72 pt, blanco), «Por favor, que venga {cuidador}.», botón «Ya me atendieron» verde sobre fondo oscuro (al menos 300 × 120 px, `emergencia:atendido`) y cómo apagarla. Es la **única** ventana propia que toma el foco (para Esc). La alarma (`sistema/alarma.py`) es un WAV armado en memoria (960/640 Hz, 0,35 s, fuerza según `emergencia.volumen`), escrito en `carpeta_datos()/alarma.wav` (o la carpeta temporal) y tocado en bucle con `PlaySound`; si falla, `Beep` en un hilo; si tampoco, aviso "No pude hacer sonar la alarma…" y siguen la pantalla y la voz. `PlanAlarma` (`emergencia.py`) calla la alarma mientras la voz dice "{mensaje}. Por favor, que venga {cuidador}." cada `emergencia.repetir_s` (12, 24, 36… s; voz `urgente`). Nada usa internet y no se toca el volumen de Windows. Con `--simular` y en las pruebas la alarma es muda (`AlarmaMuda`). Con la detección caída, el ratón en AYUDA abre la pantalla igual (y la cierra). Salir siempre detiene la alarma.
+
 ### 6.5 Calibración (`ui/calibracion.py`): ver 4.1. Pantalla completa opcional, con dibujo de la cara que indica qué hacer.
 
 ### 6.6 Opciones (`ui/opciones.py`)
 1.1: en **Puntero**, la velocidad 1–10 se elige con dos botones grandes «◀ Más lento» / «Más rápido ▶» (76 px de alto) y "3 de 10" en el centro; escribe juntos `sens_x`, `sens_y = sens_x × ajuste_vertical` (entre 0,92 y 3,3) y `joystick_g` (tabla `JOYSTICK_VELOCIDAD`); no hay clave nueva (se deduce de `sens_x`) y la calibración no cambia. Debajo, "Velocidad arriba y abajo" (`puntero.ajuste_vertical`, 0,8–2,0, en %). En **Clic**: la lupa (aumento, tamaño de la zona, espera). En **Comodidad**: botones «Sin clic» y «Lupa» en la barra.
+1.1 paquete B: pestaña **Emergencia** (botón AYUDA sí/no —al apagarlo avisa que la persona no podrá pedir ayuda con la cabeza—, «Probar la alarma (3 segundos)», lo que dice la voz, volumen de la alarma, decir el mensaje y cada cuánto, tiempo quieto sobre AYUDA y sobre «Ya me atendieron», y la nota de los parlantes). En **Gestos** la acción larga ofrece «Pedir AYUDA (alarma)» (la corta no). En **Atajos**, «Apagar la alarma de AYUDA». Con 7 pestañas, si no caben en una fila van en dos (`acomodar_pestanas`); la ayuda corta de un control va debajo a todo el ancho y, si una página no cabe a lo alto, se arma con una fila menos (los botones Guardar/Cancelar nunca quedan fuera).
 Pestañas con vista previa en vivo y "Cancelar" que revierte: **Puntero** (sensibilidad x/y, suavidad, zona muerta, aceleración, modo absoluto/joystick, monitor), **Clic** (permanencia sí/no, tiempo, radio, recuperación, sonido, modo de la barra fijo/un uso), **Gestos** (encender/apagar cada uno, sensibilidad, sostener, acción corta y larga, barras en vivo con "Probar"), **Teclado y voz** (distribución, permanencia del teclado, barrido sí/no y velocidad, voz, volumen, velocidad, "Probar voz", modo Mensaje/Directo), **Frases** (abre el editor), **Comodidad** (tamaño de letra, alto contraste, posición de la barra, indicador del borde, aviso de descanso, abrir al encender, arrancar activo o en pausa, mostrar video), **Atajos**. Todos los controles son botones grandes de "−" y "+" (no deslizadores finos), para que sean operables con la cabeza. "Volver a los valores de fábrica" pide confirmación.
 
 ### 6.7 Ayuda (`ui/ayuda.py`)
@@ -481,6 +489,8 @@ Archivo `frases.json` (validado; texto 1 a 200 caracteres; máximo 12 categoría
 
 1.1 paquete A (bloque aparte al final de `FABRICA`; una configuración 1.0 sin estas claves toma estos valores sin anotar problemas): `puntero.ajuste_vertical` = 1,2; `barra.boton_sin_clic` = true; `barra.boton_lupa` = true; `lupa` = `{"zona_px": 200, "aumento": 3, "espera_s": 8.0}`.
 
+1.1 paquete B: `emergencia` = `{"activa": true, "mensaje": "Necesito ayuda", "volumen": 100, "repetir_voz": true, "repetir_s": 12, "permanencia_s": 2.5, "detener_s": 3.0}` y `atajos.emergencia` = "Ctrl+Alt+A" (se valida como los demás atajos). `emergencia.mensaje`: texto de 1 a 60 caracteres (`LARGO_TEXTO`). Regla de coherencia: `gestos.*.corto = "emergencia"` pasa a `ninguna` y `gestos.parpadeo.fuera_barrido = "emergencia"` también (con problema anotado).
+
 `calibracion` de un perfil: `{"fecha", "centro": [yaw0, pitch0], "izq", "der", "arr", "aba", "signo_x", "signo_y", "base": {"ear_der", "ear_izq", "mar", "cejas", "sonrisa"}, "umbrales": {...}, "parpadeo_natural_max_ms", "parpadeos_min"}`.
 
 ### 9.1 Rangos (`RANGOS`; fuera de rango ⇒ valor de fábrica + registro)
@@ -505,6 +515,8 @@ Archivo `frases.json` (validado; texto 1 a 200 caracteres; máximo 12 categoría
 | comodidad.descanso_min | 0 o 10–120 (`MINIMO_SI_NO_CERO`) | | |
 | puntero.ajuste_vertical (1.1) | 0,8–2,0 | lupa.zona_px (1.1) | 120–400 (entero) |
 | lupa.aumento (1.1) | 2–5 (entero) | lupa.espera_s (1.1) | 4,0–20,0 |
+| emergencia.volumen (1.1) | 10–100 (entero) | emergencia.repetir_s (1.1) | 5–60 (entero) |
+| emergencia.permanencia_s (1.1) | 1,5–5,0 | emergencia.detener_s (1.1) | 2,0–5,0 |
 
 `OPCIONES`: `puntero.modo` ∈ {absoluto, joystick}; `barra.posicion` ∈ {derecha, izquierda, arriba, abajo}; `teclado.distribucion` ∈ {auto, qwerty, frecuencia}; `teclado.modo_escritura` ∈ {mensaje, directo}; `teclado.posicion` ∈ {abajo, arriba}; `teclado.genero` ∈ {neutro, masculino, femenino}; `arranque.estado` ∈ {auto, activo, pausa}; acciones de gestos ∈ lista de 5.4. Si dos gestos activos quedan sin ninguna forma de reanudar (por ejemplo, ningún gesto con `pausar` y sin permanencia), la validación **vuelve a encender** la permanencia sobre el botón "Reanudar" (siempre existe).
 
@@ -518,6 +530,7 @@ Archivo `frases.json` (validado; texto 1 a 200 caracteres; máximo 12 categoría
 | Ctrl+Alt+C | Recentrar |
 | Ctrl+Alt+Inicio | Mostrar la ventana principal |
 | Ctrl+Alt+Fin | Salir (suelta todo) |
+| Ctrl+Alt+A (1.1) | Apagar la alarma de AYUDA: calla el sonido ya en el hilo de atajos y la máquina vuelve a como estaba; sin emergencia no hace nada. Se registra justo después de «Salir» |
 - Elegidos para no chocar con Lycan Mouse Control (Ctrl+Alt+M/X/O/D/P). `atajos.py` comprueba con `ToUnicode` que la combinación no produzca un carácter con AltGr en la distribución activa (teclado latinoamericano) y, si el atajo está ocupado, avisa y deja cambiarlo.
 
 ---

@@ -11,10 +11,13 @@ from __future__ import annotations
 import tkinter as tk
 
 from ..version import VERSION
-from .comun import BotonGrande, area_libre, dibujar_cara, letra, no_activar, tema
+from .comun import BotonGrande, acomodar_pestanas, area_libre, dibujar_cara, letra, no_activar, tema
 from .textos import atajos_kw, barra_uso, nombre_accion, pausa_uso, t
 
 SECCIONES = ("gestos", "uso", "cuidador", "problemas", "acerca")
+# 1.1 paquete B: página del botón AYUDA (emergencia), después de «Cómo se usa»
+SECCIONES = ("gestos", "uso", "emergencia", "cuidador", "problemas", "acerca")
+MAX_PT_PESTANA = 24          # 1.1: tope de la letra de las pestañas (con la letra al 200 %)
 MIN_PT_AYUDA = 11            # si un solo párrafo no cabe ni en una página, se achica hasta aquí
 
 
@@ -65,11 +68,16 @@ class VentanaAyuda:
         tabs = self._tabs = tk.Frame(w, bg=T.fondo)
         tabs.pack(fill="x", padx=10, pady=(10, 4))
         self.tabs = {}
+        # 1.1: con 6 secciones las pestañas pueden ir en dos filas; con la letra al 200 % se quedan
+        # en 24 pt (siguen grandes) para que el texto de cada página tenga lugar
+        f_tab = letra(cfg, 16, True)
+        f_tab = (f_tab[0], min(f_tab[1], MAX_PT_PESTANA)) + tuple(f_tab[2:])
         for s in SECCIONES:
-            b = BotonGrande(tabs, t(f"ayuda_sec_{s}"), app.registro.comando(f"ayuda:{s}"), T, letra(cfg, 16, True))
-            b.pack(side="left", expand=True, fill="x", padx=3)
+            b = BotonGrande(tabs, t(f"ayuda_sec_{s}"), app.registro.comando(f"ayuda:{s}"), T, f_tab)
             app.registro.agregar(f"ayuda:{s}", b, lambda s=s: self.ir_a(s))
             self.tabs[s] = b
+        # 1.1: con la página «Emergencia» ya no caben en una fila en 1366 × 768: van en dos
+        acomodar_pestanas(tabs, list(self.tabs.values()), self.W - 20)
         abajo = self._abajo = tk.Frame(w, bg=T.fondo)
         abajo.pack(side="bottom", fill="x", padx=10, pady=10)
         b = BotonGrande(abajo, t("btn_cerrar"), app.registro.comando("ayuda:cerrar"), T, letra(cfg, 18, True))
@@ -189,8 +197,9 @@ class VentanaAyuda:
             self._armar_gestos(cfg, T, disponible)
             return
         # los atajos y la forma de pausar son los que de verdad están puestos (no los de fábrica)
+        from ..emergencia import mensaje_voz
         texto = t(f"ayuda_{seccion}", version=VERSION, pausa=pausa_uso(cfg), barra=barra_uso(cfg),
-                  **atajos_kw(cfg))
+                  mensaje=mensaje_voz(cfg), **atajos_kw(cfg))
         paginas = self.paginas_de(texto, disponible, letra(cfg, 16))
         self.paginas = len(paginas)
         self.pagina = min(self.pagina, self.paginas - 1)

@@ -82,6 +82,12 @@ FABRICA["puntero"]["ajuste_vertical"] = 1.2
 FABRICA["barra"]["boton_sin_clic"] = True
 FABRICA["barra"]["boton_lupa"] = True
 FABRICA["lupa"] = {"zona_px": 200, "aumento": 3, "espera_s": 8.0}
+# ---- 1.1 paquete B: emergencia (botón AYUDA) ----
+# Pantalla roja, alarma sin internet y voz. Quedarse quieto 2,5 s sobre AYUDA la pide (más que un
+# botón normal); 3 s sobre «Ya me atendieron» la apaga. El cuidador la apaga con Ctrl+Alt+A.
+FABRICA["emergencia"] = {"activa": True, "mensaje": "Necesito ayuda", "volumen": 100, "repetir_voz": True,
+                         "repetir_s": 12, "permanencia_s": 2.5, "detener_s": 3.0}
+FABRICA["atajos"]["emergencia"] = "Ctrl+Alt+A"
 
 # Rangos válidos (ruta con puntos -> (mínimo, máximo)). "*" vale por cualquier gesto.
 # Fuera de rango = valor de fábrica (y se anota en el registro).
@@ -108,6 +114,9 @@ RANGOS = {
     # ---- 1.1 paquete A: velocidad, minimizar y extras de TD Control ----
     "puntero.ajuste_vertical": (0.8, 2.0),
     "lupa.zona_px": (120, 400), "lupa.aumento": (2, 5), "lupa.espera_s": (4.0, 20.0),
+    # ---- 1.1 paquete B: emergencia ----
+    "emergencia.volumen": (10, 100), "emergencia.repetir_s": (5, 60),
+    "emergencia.permanencia_s": (1.5, 5.0), "emergencia.detener_s": (2.0, 5.0),
 }
 # 0 = apagado; si no es 0, hay un mínimo (un aviso de descanso cada minuto no sirve)
 MINIMO_SI_NO_CERO = {"comodidad.descanso_min": 10}
@@ -126,6 +135,8 @@ OPCIONES = {
 }
 # Textos con largo máximo (el nombre del cuidador se dice en voz alta en las frases)
 LARGO_TEXTO = {"teclado.cuidador": 40}
+# ---- 1.1 paquete B: lo que dice la voz al pedir ayuda ----
+LARGO_TEXTO["emergencia.mensaje"] = 60
 
 
 def carpeta_datos() -> Path:
@@ -333,6 +344,16 @@ def _coherencia(out: dict, problemas: list):
         nuevo = min(max(p["abierto"], lo), hi)
         problemas.append(f"gestos.parpadeo.abierto: {p['abierto']} fuera de {lo}–{hi}; se usó {nuevo}")
         p["abierto"] = nuevo
+    # 1.1 paquete B: pedir AYUDA solo con un gesto LARGO (un gesto corto sale sin querer al
+    # hablar, bostezar o toser) y nunca con el parpadeo (un parpadeo largo de sueño, de noche)
+    for nombre in ("boca", "cejas", "sonrisa"):
+        g = out["gestos"][nombre]
+        if g["corto"] == "emergencia":
+            problemas.append(f"gestos.{nombre}.corto: «emergencia» solo se permite en el gesto largo")
+            g["corto"] = "ninguna"
+    if p.get("fuera_barrido") == "emergencia":
+        problemas.append("gestos.parpadeo.fuera_barrido: el parpadeo no puede pedir ayuda")
+        p["fuera_barrido"] = "ninguna"
     # siempre hay forma de reanudar sin manos
     if not formas_de_reanudar(out):
         problemas.append("sin forma de reanudar: se volvió a encender la permanencia")

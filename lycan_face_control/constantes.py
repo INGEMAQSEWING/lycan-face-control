@@ -117,11 +117,24 @@ BOTONES_BARRA = BOTONES_BARRA + (
     ("lupa", "Lupa"),
     ("minimizar", "Minimizar"),
 )
+# ---- 1.1 paquete B: botón AYUDA (emergencia), siempre al final y en rojo ----
+BOTONES_BARRA = BOTONES_BARRA + (
+    ("ayuda", "AYUDA"),
+)
+ID_EMERGENCIA_BARRA = "barra:ayuda"
+ID_EMERGENCIA_TECLADO = "teclado:ayuda"
+ID_EMERGENCIA_PESTANA = "pestana:ayuda"      # en la pestaña de la barra minimizada
+ID_ATENDIDO = "emergencia:atendido"          # «Ya me atendieron» en la pantalla roja
+IDS_EMERGENCIA = (ID_EMERGENCIA_BARRA, ID_EMERGENCIA_TECLADO, ID_EMERGENCIA_PESTANA)
 
 # ---- Gestos y acciones asignables (sección 5.4) ----
 GESTOS = ("boca", "cejas", "sonrisa", "parpadeo")
 ACCIONES_GESTO = ("ninguna", "clic", "clic_izq", "clic_der", "doble", "arrastrar", "pausar", "teclado",
                   "recentrar", "borrar", "elegir", "hablar", "siguiente")
+# ---- 1.1 paquete B: emergencia (botón AYUDA) ----
+# "emergencia" solo vale en el gesto LARGO (la validación pasa un gesto corto a "ninguna") y nunca
+# en el parpadeo: un parpadeo largo de sueño no debe hacer sonar una alarma de noche.
+ACCIONES_GESTO = ACCIONES_GESTO + ("emergencia",)
 
 # ---- Nombres del programa ----
 NOMBRE_APP = "Lycan Face Control"

@@ -162,7 +162,8 @@ def texto_error_registro(nombre_atajo: str, codigo: int) -> str:
 
 
 NOMBRES_FUNCION = {"pausar": "Pausar / reanudar", "teclado": "Abrir / cerrar el teclado",
-                   "recentrar": "Recentrar", "ventana": "Mostrar la ventana principal", "salir": "Salir"}
+                   "recentrar": "Recentrar", "ventana": "Mostrar la ventana principal", "salir": "Salir",
+                   "emergencia": "Apagar la alarma de AYUDA"}      # 1.1 paquete B
 
 
 def texto_repetido(nombre_atajo: str, funcion_previa: str) -> str:
@@ -171,10 +172,11 @@ def texto_repetido(nombre_atajo: str, funcion_previa: str) -> str:
 
 
 def orden_registro(atajos: dict) -> list:
-    """(id, nombre, texto) en el orden en que se registran: «salir» primero, para que en un choque
-    gane siempre el atajo de seguridad. Los id son fijos (posición en el diccionario)."""
+    """(id, nombre, texto) en el orden en que se registran: «salir» primero (y luego «emergencia»),
+    para que en un choque gane siempre el atajo de seguridad. Los id son fijos (posición en el diccionario)."""
     filas = [(i, n, tx) for i, (n, tx) in enumerate(atajos.items(), start=1)]
-    return sorted(filas, key=lambda f: (f[1] != "salir", f[0]))
+    # 1.1 paquete B: «emergencia» (apagar la alarma de AYUDA) va justo después de «salir»
+    return sorted(filas, key=lambda f: ({"salir": 0, "emergencia": 1}.get(f[1], 2), f[0]))
 
 
 class HiloAtajos(threading.Thread):

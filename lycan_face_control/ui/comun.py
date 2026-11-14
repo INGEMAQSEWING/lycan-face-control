@@ -425,3 +425,30 @@ def dibujar_puntos(canvas: tk.Canvas, puntos, ancho: int, alto: int, color: str,
     linea((K.COMISURA_DER, K.LABIO_SUP, K.COMISURA_IZQ, K.LABIO_INF), True, 2)
     nx, ny = P(K.NARIZ)
     canvas.create_oval(nx - 4, ny - 4, nx + 4, ny + 4, fill=color, outline="")
+
+
+# --------------------------------------------------------------------------- pestañas en filas (1.1)
+def acomodar_pestanas(contenedor, widgets: list, ancho: int, padx: int = 3, pady: int = 2) -> int:
+    """Pone las pestañas (``widgets``, hijos de ``contenedor`` todavía sin ubicar) en una fila; si
+    no caben en ``ancho`` px sin cortar el texto, en dos (o más) filas parejas. Devuelve cuántas
+    filas usó. 1.1 paquete B: con la pestaña «Emergencia» ya no cabían en 1366 × 768."""
+    try:
+        contenedor.update_idletasks()
+        anchos = [w.winfo_reqwidth() + 2 * padx for w in widgets]
+    except tk.TclError:
+        anchos = [0] * len(widgets)
+    n = len(widgets)
+    filas = 1
+    while filas < n:
+        por_fila = -(-n // filas)
+        if all(sum(anchos[i:i + por_fila]) <= ancho for i in range(0, n, por_fila)):
+            break
+        filas += 1
+    por_fila = -(-n // max(filas, 1)) if n else 1
+    for i in range(0, n, por_fila):
+        marco = tk.Frame(contenedor, bg=contenedor.cget("bg"))
+        marco.pack(fill="x", pady=(0 if i == 0 else pady, 0))
+        for w in widgets[i:i + por_fila]:
+            w.pack(in_=marco, side="left", expand=True, fill="x", padx=padx)
+            w.lift(marco)
+    return filas

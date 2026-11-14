@@ -19,7 +19,7 @@ import logging
 import math
 import statistics
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from . import constantes as K
 from . import lupa as lupa_mod
@@ -101,6 +101,9 @@ MODOS_CLIC = ("izq", "doble", "der", "arrastrar", "desplazar")
 MODOS_CLIC = MODOS_CLIC + ("ninguno", "lupa")
 ID_BARRA_MOSTRAR = "ui:barra_mostrar"     # pestaña de la barra minimizada: se elige también en pausa
 SUBMODOS_SIN_PUNTERO = (K.BARRIDO, K.SOLO_COMUNICACION)
+# ---- 1.1 paquete B: emergencia (botón AYUDA) ----
+IDS_EMERGENCIA = K.IDS_EMERGENCIA
+ID_ATENDIDO = K.ID_ATENDIDO
 
 
 @dataclass
@@ -124,6 +127,7 @@ class Vista:
     objetivo: str | None = None
     reanuda_parpadeo: bool = False              # en pausa: dos parpadeos largos reanudan
     mirando_afuera: bool = False                # la cabeza está muy fuera de su rango cómodo
+    emergencia: bool = False                    # 1.1: se pidió AYUDA (pantalla roja y alarma)
 
 
 @dataclass
@@ -183,6 +187,11 @@ class Maquina:
         self._desarmar_hasta = None
         self._clic_gesto_congelado = False
         self._lupa = None                         # {"zona", "ventana", "imagen", "t0"} con la lupa abierta
+        # 1.1 paquete B: emergencia. Mientras dura, el puntero se mueve pero ningún clic llega a
+        # Windows y lo único elegible es «Ya me atendieron».
+        self.emergencia = False
+        self._estado_antes_emergencia = None
+        self._t_emergencia = None
 
     # ------------------------------------------------------------ armado
     def _construir(self, conservar_pos: bool = False):
@@ -398,6 +407,16 @@ class Maquina:
         acc: list = []
         if not ident:
             return acc
+        if ident in IDS_EMERGENCIA:
+            # el cuidador con el ratón o el barrido del teclado: vale en cualquier estado
+            self._pedir_ayuda(t, "barrido" if ident == K.ID_EMERGENCIA_TECLADO and
+                              self.submodo in SUBMODOS_SIN_PUNTERO else "cuidador", acc)
+            return acc
+        if ident == ID_ATENDIDO:
+            self._atendido(t, "cuidador", acc)
+            return acc
+        if self.emergencia:
+            return acc                          # durante la emergencia no se elige nada más
         if self.estado == K.PAUSA:
             if ident in IDS_REANUDAR:
                 self._reanudar(t, "botón Reanudar", acc)
@@ -488,6 +507,11 @@ class Maquina:
             self._muestras.clear()
         self._guardar_muestra(medidas, t)
         g = self.gestos.actualizar(medidas, t)
+        if self.emergencia:
+            # 1.1: con la emergencia activa no cuenta nada más (ni la cara perdida, ni mirar afuera,
+            # ni los gestos): solo «Ya me atendieron»
+            st = self._paso_emergencia(t, medidas, g, acc)
+            return Resultado(acc, self._vista(t, g, st, medidas))
         if self._t_cara_nueva is not None:
             if t - self._t_cara_nueva < CARA_ESTABLE_S - 1e-9:
                 g.eventos = []                  # todavía no se aceptan gestos de esta cara
@@ -709,9 +733,14 @@ class Maquina:
             if any(isinstance(e, DobleParpadeoLargo) for e in g.eventos):
                 self._reanudar(t, "doble parpadeo", acc)
                 return EstadoPermanencia()
+        # 1.1: el gesto LARGO asignado a «emergencia» pide ayuda también en pausa (la pausa del
+        # cuidador incluida): solo el gesto largo completo, un bostezo corto no basta
+        if self._gesto_largo_emergencia(g):
+            self._pedir_ayuda(t, "gesto", acc)
+            return EstadoPermanencia()
         candidatos = [o for o in self._objetivos_libres(pos, t)
-                      if o.id in IDS_REANUDAR + (ID_BARRA_MOSTRAR,) and o.elegible]
-        obj = buscar_objetivo(pos, candidatos, self._obj_actual)
+                      if o.id in IDS_REANUDAR + (ID_BARRA_MOSTRAR,) + IDS_EMERGENCIA and o.elegible]
+        obj = self._con_tiempo_emergencia(buscar_objetivo(pos, candidatos, self._obj_actual))
         self._obj_actual = obj
         if g.gesto_activo:
             self.perm.reiniciar()
@@ -721,6 +750,9 @@ class Maquina:
             acc.append(Elegir(st.objetivo))
             if st.objetivo == ID_BARRA_MOSTRAR:
                 return st                  # abrir la barra minimizada no reanuda
+            if st.objetivo in IDS_EMERGENCIA:
+                self._pedir_ayuda(t, "botón", acc)
+                return st
             self._reanudar(t, "botón Reanudar", acc)
         return st
 
@@ -761,7 +793,7 @@ class Maquina:
             if isinstance(ev, GestoCorto):
                 ok = gc[ev.nombre]["corto"] == "pausar"
             elif isinstance(ev, GestoLargo):
-                ok = gc[ev.nombre]["largo"] == "pausar"
+                ok = gc[ev.nombre]["largo"] in ("pausar", "emergencia")   # 1.1: pedir ayuda mirando a otro lado
             elif isinstance(ev, ParpadeoLargo):
                 ok = gc["parpadeo"].get("fuera_barrido", "ninguna") == "pausar"
             else:
@@ -792,7 +824,9 @@ class Maquina:
         # ---- eventos de gestos ----
         for ev in g.eventos:
             if isinstance(ev, GestoCorto):
-                self._accion_gesto(self.cfg["gestos"][ev.nombre]["corto"], t, pos, acc, ev.nombre)
+                corto = self.cfg["gestos"][ev.nombre]["corto"]
+                if corto != "emergencia":       # 1.1: el gesto corto nunca pide ayuda
+                    self._accion_gesto(corto, t, pos, acc, ev.nombre)
             elif isinstance(ev, GestoLargo):
                 self._accion_gesto(self.cfg["gestos"][ev.nombre]["largo"], t, pos, acc, ev.nombre)
             elif isinstance(ev, ParpadeoLargo):
@@ -800,11 +834,12 @@ class Maquina:
                     accion = "elegir"
                 else:
                     accion = self.cfg["gestos"]["parpadeo"].get("fuera_barrido", "ninguna")
-                self._accion_gesto(accion, t, pos, acc, None)
+                if accion != "emergencia":      # 1.1: el parpadeo nunca pide ayuda
+                    self._accion_gesto(accion, t, pos, acc, None)
             elif isinstance(ev, ParpadeoListo):
                 if self._parpadeo_con_accion():
                     self._sonido("listo", acc)
-            if self.estado != K.ACTIVO:
+            if self.estado != K.ACTIVO or self.emergencia:
                 return EstadoPermanencia()
         sub = self.submodo
         # ---- arrastre: tope de seguridad ----
@@ -840,9 +875,12 @@ class Maquina:
             self.perm.reiniciar()
             return EstadoPermanencia()
         if sub == K.ARRASTRANDO:
-            obj = None
+            # arrastrando, quedarse quieto suelta el botón; solo AYUDA se puede elegir encima
+            obj = buscar_objetivo(pos, [o for o in self._objetivos_libres(pos, t)
+                                        if o.id in IDS_EMERGENCIA and o.elegible], self._obj_actual)
         else:
             obj = buscar_objetivo(pos, self._objetivos_libres(pos, t), self._obj_actual)
+        obj = self._con_tiempo_emergencia(obj)
         self._obj_actual = obj
         libre = bool(self._p_cfg["activa"]) and (sub == K.ARRASTRANDO or not sobre_ventana_propia(pos, self.objetivos))
         if self.modo_clic == "ninguno" and sub == K.NORMAL:
@@ -877,8 +915,9 @@ class Maquina:
         if f is None:
             return EstadoPermanencia()
         vpos = self.mapeo.recortar(*f)
-        candidatos = [o for o in self.objetivos if o.id == ID_TERMINAR_DESPLAZAR and o.elegible]
-        obj = buscar_objetivo(vpos, candidatos, self._obj_actual)
+        candidatos = [o for o in self._objetivos_libres(vpos, t)
+                      if o.id in (ID_TERMINAR_DESPLAZAR,) + IDS_EMERGENCIA and o.elegible]
+        obj = self._con_tiempo_emergencia(buscar_objetivo(vpos, candidatos, self._obj_actual))
         self._obj_actual = obj
         if obj is None:
             self.perm.reiniciar()
@@ -995,6 +1034,11 @@ class Maquina:
     def _accion_gesto(self, accion: str, t: float, pos, acc: list, nombre: str | None):
         if not accion or accion == "ninguna":
             return
+        if accion == "emergencia":
+            # 1.1: solo llega aquí el gesto largo (la validación y _en_activo filtran los demás).
+            # El gesto largo se cuenta al soltarlo: no hay tramo en curso que consumir.
+            self._pedir_ayuda(t, "gesto", acc)
+            return
         sub = self.submodo
         if sub in SUBMODOS_SIN_PUNTERO:
             # en el barrido el puntero no se usa: un gesto de clic elige lo resaltado
@@ -1013,6 +1057,11 @@ class Maquina:
                 return
             if sub != K.ARRASTRANDO:
                 obj = buscar_objetivo(pos, self.objetivos, self._obj_actual)
+                if obj is not None and obj.id in IDS_EMERGENCIA:
+                    # AYUDA se pide quedándose quieto: un gesto de clic encima (hablar, bostezar)
+                    # no la dispara; se recuerda cómo pedirla
+                    acc.append(Aviso("emergencia_quieto"))
+                    return
                 if obj is not None:
                     self._elegir(obj.id, t, pos, acc)
                     self.perm.marcar_disparo(pos, t)
@@ -1058,6 +1107,13 @@ class Maquina:
         if ident == lupa_mod.ID_ZONA:
             if self.submodo == K.LUPA:
                 self._clic_lupa(t, pos, acc)
+            return
+        if ident in IDS_EMERGENCIA:
+            acc.append(Elegir(ident))
+            self._pedir_ayuda(t, "cuidador" if self._por_cuidador else "botón", acc)
+            return
+        if ident == ID_ATENDIDO:
+            self._atendido(t, "cuidador" if self._por_cuidador else "persona", acc)
             return
         acc.append(Elegir(ident))
         self._sonido("clic", acc)
@@ -1195,6 +1251,9 @@ class Maquina:
         clic preciso; en cualquier otra parte no hace nada."""
         otros = [o for o in self.objetivos if o.id != lupa_mod.ID_ZONA]
         obj = buscar_objetivo(pos, otros, self._obj_actual)
+        if obj is not None and obj.id in IDS_EMERGENCIA:
+            acc.append(Aviso("emergencia_quieto"))     # 1.1: AYUDA solo quedándose quieto
+            return
         if obj is not None:
             self._elegir(obj.id, t, pos, acc)
             self.perm.marcar_disparo(pos, t)
@@ -1220,7 +1279,7 @@ class Maquina:
             return EstadoPermanencia()
         zobj = self._zona_lupa()
         otros = [o for o in self._objetivos_libres(pos, t) if o.id != lupa_mod.ID_ZONA]
-        obj = buscar_objetivo(pos, otros, self._obj_actual)
+        obj = self._con_tiempo_emergencia(buscar_objetivo(pos, otros, self._obj_actual))
         self._obj_actual = obj
         libre = obj is None and zobj is not None and zobj.contiene(*pos) and bool(self._p_cfg["activa"])
         tiempo_obj = self.cfg["barra"]["permanencia_s"] if obj is not None else None
@@ -1239,14 +1298,118 @@ class Maquina:
                 self._clic_lupa(t, pos, acc)
         return st
 
+    # ------------------------------------------------------------ emergencia (1.1 paquete B)
+    def pedir_ayuda(self, t: float, origen: str = "cuidador") -> list:
+        """Pide AYUDA (botón, gesto largo, barrido o el ratón del cuidador). Vale en cualquier
+        estado, también en pausa."""
+        acc: list = []
+        self._pedir_ayuda(t, origen, acc)
+        return acc
+
+    def atendido(self, t: float, origen: str = "atajo") -> list:
+        """Apaga la emergencia («Ya me atendieron», Esc, el ratón o el atajo del cuidador). Sin
+        emergencia no hace nada."""
+        acc: list = []
+        self._atendido(t, origen, acc)
+        return acc
+
+    def _gesto_largo_emergencia(self, g: ResultadoGestos) -> bool:
+        gc = self.cfg["gestos"]
+        return any(isinstance(ev, GestoLargo) and gc[ev.nombre]["largo"] == "emergencia"
+                   for ev in g.eventos)
+
+    def _con_tiempo_emergencia(self, obj):
+        """Los botones AYUDA piden quedarse quieto ``emergencia.permanencia_s`` (2,5 s), más que
+        un botón normal, aunque la interfaz publique otro tiempo; «Ya me atendieron» pide
+        ``emergencia.detener_s``."""
+        if obj is None:
+            return None
+        if obj.id in IDS_EMERGENCIA:
+            return replace(obj, tiempo_s=float(self.cfg["emergencia"]["permanencia_s"]))
+        if obj.id == ID_ATENDIDO:
+            return replace(obj, tiempo_s=float(self.cfg["emergencia"]["detener_s"]))
+        return obj
+
+    def _pedir_ayuda(self, t: float, origen: str, acc: list):
+        if self.emergencia:
+            return
+        # primero se suelta el botón de un arrastre y se sale de los submodos con botón
+        self._salir_de_submodos_con_boton(acc)
+        acc.append(SoltarTodo("emergencia"))
+        self._estado_antes_emergencia = self.estado
+        if self.estado == K.SIN_CARA:
+            self.estado = K.ACTIVO               # al terminar sigue como siempre (sin cara: pausa)
+        self.emergencia = True
+        self._t_emergencia = t
+        self._recentrar = None
+        self._t_sin_cara = None
+        self._soltado_sin_cara = False
+        self.perm.reiniciar()
+        self._obj_actual = None
+        self.puntero.congelado = False
+        self.puntero.fijar_posicion(*self._pos_real(), t)
+        # «Ya me atendieron» aparece en el centro: si el puntero ya estaba ahí, primero hay que
+        # salir y volver (si no, quien descansa quieto apagaría su propia alarma)
+        self._bloquear((ID_ATENDIDO,), t)
+        acc.append(Aviso("emergencia", origen))
+        log.info("Emergencia activada (%s)", origen)
+
+    def _atendido(self, t: float, origen: str, acc: list):
+        if not self.emergencia:
+            return
+        self.emergencia = False
+        self._t_emergencia = None
+        acc.append(SoltarTodo("emergencia atendida"))
+        self.perm.reiniciar()
+        self._obj_actual = None
+        self._t_sin_cara = None
+        self._soltado_sin_cara = False
+        # AYUDA queda bloqueado hasta que el puntero salga de él (no se vuelve a pedir quieto encima)
+        self._bloquear(IDS_EMERGENCIA + (ID_ATENDIDO,), t)
+        # el gesto que estaba en curso no hace nada al soltarlo
+        self.gestos.refractario_hasta(t + REFRACTARIO_FIN_CALIBRACION_S)
+        for n in ("boca", "cejas", "sonrisa"):
+            if self.gestos.duracion_sostenida(n, t) > 0:
+                self.gestos.consumir(n)
+        if self.estado == K.ACTIVO:
+            self.puntero.fijar_posicion(*self._pos_real(), t)
+            self._desarmar_tras_deslizar(t)
+        acc.append(Aviso("emergencia_fin", origen))
+        log.info("Emergencia apagada (%s)", origen)
+
+    def _paso_emergencia(self, t: float, m, g: ResultadoGestos, acc: list) -> EstadoPermanencia:
+        """Durante la emergencia el puntero sigue a la cabeza (para llegar a «Ya me atendieron»),
+        pero ningún clic llega a Windows: ni por permanencia ni por gesto."""
+        if m is None:
+            # la cara perdida no detiene nada: el puntero queda donde estaba
+            self.puntero.perder_cara(t)
+            self.perm.reiniciar()
+            self._obj_actual = None
+            return EstadoPermanencia()
+        if self.puntero.congelado:
+            self.puntero.descongelar(t)
+        pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
+        if self.puntero.cambio:
+            acc.append(Mover(*pos))
+        candidatos = [o for o in self._objetivos_libres(pos, t) if o.id == ID_ATENDIDO and o.elegible]
+        obj = self._con_tiempo_emergencia(buscar_objetivo(pos, candidatos, self._obj_actual))
+        self._obj_actual = obj
+        st = self.perm.actualizar(pos, t, obj, libre=False,
+                                  tiempo_objetivo_s=self.cfg["emergencia"]["detener_s"])
+        if st.disparo and st.objetivo == ID_ATENDIDO:
+            acc.append(Elegir(ID_ATENDIDO))
+            self._atendido(t, "persona", acc)
+        return st
+
     # ------------------------------------------------------------ vista
     def _vista(self, t: float, g: ResultadoGestos, st: EstadoPermanencia, m) -> Vista:
         r = self._recentrar
         v = Vista(
             estado=self.estado, submodo=self.submodo, modo_clic=self.modo_clic,
             motivo_pausa=self.motivo_pausa, pausa_auto=self.pausa_auto,
-            puntero=self.puntero.posicion if self.estado != K.PAUSA else None,
-            puntero_virtual=self.puntero.posicion if self.estado == K.PAUSA and m is not None else None,
+            puntero=self.puntero.posicion if self.estado != K.PAUSA or self.emergencia else None,
+            puntero_virtual=(self.puntero.posicion if self.estado == K.PAUSA and m is not None
+                             and not self.emergencia else None),
             permanencia=st, gestos=g,
             sin_cara_s=(t - self._t_sin_cara) if self._t_sin_cara is not None else 0.0,
             recentrando=(min((t - r["t0"]) / RECENTRAR_S, 1.0) if r is not None else None),
@@ -1254,7 +1417,8 @@ class Maquina:
             arrastre_s=(t - self._t_arrastre) if self._t_arrastre is not None else 0.0,
             medidas=m, objetivo=self._obj_actual.id if self._obj_actual is not None else None,
             reanuda_parpadeo=self.estado == K.PAUSA and self.reanuda_con_parpadeo(),
-            mirando_afuera=self._afuera and self.estado == K.ACTIVO)
+            mirando_afuera=self._afuera and self.estado == K.ACTIVO,
+            emergencia=self.emergencia)
         self._ultima_vista = v
         return v
 

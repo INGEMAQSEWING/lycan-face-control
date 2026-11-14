@@ -15,6 +15,13 @@ el modo Desplazar aparece "Terminar" (y no se puede minimizar: "Terminar" tiene 
   vuelven a abrir. Lo minimizado no se guarda: al abrir el programa manda ``barra.visible``.
 - Con el teclado abierto la barra no muestra «Sin clic» ni «Lupa» (cabe en una columna y el
   teclado conserva su ancho; ver docs/decisiones.md).
+
+1.1 paquete B:
+- Botón rojo «AYUDA» (``barra:ayuda``) al final, con doble separación antes. Lo atiende la
+  máquina: quedarse quieto ``emergencia.permanencia_s`` (2,5 s) encima pide ayuda, también en
+  pausa. Con ``emergencia.activa`` apagado no aparece.
+- La pestaña de la barra minimizada lleva también su «AYUDA» rojo (``pestana:ayuda``), de al
+  menos 72 px.
 """
 from __future__ import annotations
 
@@ -38,13 +45,16 @@ PESTANA_TIEMPO_S = 0.6      # abrir la barra no tiene riesgo: basta poco tiempo 
 PESTANA_CORTO, PESTANA_LARGO = 56, 120
 PT_PESTANA = 18
 SIN_TECLADO = ("sin_clic", "lupa")    # botones que no se muestran con el teclado abierto
+# 1.1 paquete B: AYUDA
+AYUDA_MIN_PX = 72                     # el AYUDA de la pestaña nunca es más chico que esto
 
 
 def _cabe(n: int, tam: int, sep: int, largo: int) -> bool:
     return n * tam + (n - 1) * sep <= largo
 
 
-def medidas_barra(n: int, boton_px: int, area: tuple, vertical: bool, alto_natural: int, ancho_natural: int):
+def medidas_barra(n: int, boton_px: int, area: tuple, vertical: bool, alto_natural: int, ancho_natural: int,
+                  extra: int = 0):
     """Tamaño de cada botón, separación y número de columnas para que ``n`` botones quepan en el
     área de trabajo.
 
@@ -52,10 +62,12 @@ def medidas_barra(n: int, boton_px: int, area: tuple, vertical: bool, alto_natur
     Primero se intenta una columna: se achica hasta el tamaño natural del texto y, si aun así no
     cabe, se reduce la separación (a 4 px). Si para caber habría que bajar de 72 px (``ALTO_MIN``)
     —o, en la barra horizontal, cortar el texto—, se arman 2 columnas (y, en una pantalla muy
-    chica, 3). Nunca se baja de 72 px mientras haya otra opción."""
+    chica, 3). Nunca se baja de 72 px mientras haya otra opción.
+
+    ``extra``: píxeles de más a lo largo de la barra (1.1: la doble separación antes de AYUDA)."""
     l, a, d, ab = area
     largo = (ab - a) if vertical else (d - l)
-    largo -= 2 * MARGEN_BORDE
+    largo -= 2 * MARGEN_BORDE + max(int(extra), 0)
     n = max(int(n), 1)
     alto0 = max(boton_px, alto_natural)
     ancho0 = max(boton_px, ancho_natural)
@@ -116,6 +128,8 @@ class BarraAcciones:
             ids.remove("sin_clic")
         if not b.get("boton_lupa", True):
             ids.remove("lupa")
+        if not (self.cfg.get("emergencia") or {}).get("activa", True):
+            ids.remove("ayuda")              # 1.1: sin el botón AYUDA (lo decidió el cuidador)
         if self.con_teclado:
             ids = [i for i in ids if i not in SIN_TECLADO]
         if submodo == K.DESPLAZAR:
@@ -150,7 +164,7 @@ class BarraAcciones:
         alto_nat = 2 * ft.metrics("linespace") + 20      # ícono y texto, una línea cada uno
         area = area_de_trabajo(self.root)
         ancho, alto, sep, cols = medidas_barra(len(ids), int(cfg["barra"].get("boton_px", 96)), area, vertical,
-                                               alto_nat, ancho_nat)
+                                               alto_nat, ancho_nat, extra=SEPARACION if "ayuda" in ids else 0)
         self.medidas = (ancho, alto, sep, cols)
         por_col = math.ceil(len(ids) / cols)
         w = self.win = tk.Toplevel(self.root)
@@ -165,11 +179,17 @@ class BarraAcciones:
                 fila, col = n % por_col, n // por_col
             else:
                 fila, col = n // por_col, n % por_col
-            marco.grid(row=fila, column=col, padx=(0 if col == 0 else sep, 0), pady=(0 if fila == 0 else sep, 0))
+            # 1.1: doble separación antes de AYUDA (no se elige sin querer al ir a «Pausa»)
+            doble = ident == "ayuda"
+            px = 0 if col == 0 else (2 * sep if doble and not vertical else sep)
+            py = 0 if fila == 0 else (2 * sep if doble and vertical else sep)
+            marco.grid(row=fila, column=col, padx=(px, 0), pady=(py, 0))
             texto, icono = textos[ident]
             oid = self._oid(ident)
             b = BotonGrande(marco, texto, self._comando(ident), T, f_texto, icono=icono)
             b.configure(font=f_texto)
+            if ident == "ayuda":
+                b.poner_color(T.rojo)        # rojo con texto negro (7:1)
             b.pack(fill="both", expand=True)
             interno = (oid.startswith("barra:") and ident != "minimizar") or oid == K_TERMINAR
             reg.agregar(oid, b, self._accion(ident), interno=interno)
@@ -206,14 +226,35 @@ class BarraAcciones:
         p.configure(bg=T.fondo)
         bt = BotonGrande(p, t("barra_mostrar"), reg.comando(ID_MOSTRAR), T, (LETRA, PT_PESTANA, "bold"),
                          icono=t(f"icono_mostrar_{pos}"))
-        bt.pack(fill="both", expand=True)
         reg.agregar(ID_MOSTRAR, bt, self.mostrar, tiempo_s=PESTANA_TIEMPO_S)
         self.boton_pestana = bt
+        # 1.1 paquete B: la pestaña también tiene su AYUDA rojo (al menos 72 × 72 px)
+        self.boton_pestana_ayuda = None
+        ba = None
+        if (self.cfg.get("emergencia") or {}).get("activa", True):
+            ba = BotonGrande(p, t("barra_ayuda"), reg.comando(K.ID_EMERGENCIA_PESTANA), T,
+                             (LETRA, PT_PESTANA, "bold"), icono=t("icono_ayuda"))
+            ba.poner_color(T.rojo)
+            reg.agregar(K.ID_EMERGENCIA_PESTANA, ba, None, interno=True)
+            self.boton_pestana_ayuda = ba
         p.update_idletasks()
+        bw, bh = bt.winfo_reqwidth(), bt.winfo_reqheight()
+        aw, ah = (max(ba.winfo_reqwidth(), AYUDA_MIN_PX), max(ba.winfo_reqheight(), AYUDA_MIN_PX)) if ba else (0, 0)
+        sep = SEPARACION if ba else 0
         if vertical:
-            pw, ph = max(p.winfo_reqwidth(), PESTANA_CORTO), max(p.winfo_reqheight(), PESTANA_LARGO)
+            pw = max(bw, aw, PESTANA_CORTO)
+            alto_b = max(bh, PESTANA_LARGO)
+            ph = alto_b + sep + ah
+            bt.place(x=0, y=0, width=pw, height=alto_b)
+            if ba:
+                ba.place(x=0, y=alto_b + sep, width=pw, height=ah)
         else:
-            pw, ph = max(p.winfo_reqwidth(), PESTANA_LARGO), max(p.winfo_reqheight(), PESTANA_CORTO)
+            ph = max(bh, ah, PESTANA_CORTO)
+            ancho_b = max(bw, PESTANA_LARGO)
+            pw = ancho_b + sep + aw
+            bt.place(x=0, y=0, width=ancho_b, height=ph)
+            if ba:
+                ba.place(x=ancho_b + sep, y=0, width=aw, height=ph)
         if pos == "derecha":
             px, py = d - pw, a + (ab - a - ph) // 2
         elif pos == "izquierda":
