@@ -299,7 +299,7 @@ Decisiones tomadas sin poder consultar (el usuario dormía). Cada una tiene su p
 3. **Video**: hueco con aviso «Está en preparación» y la etiqueta `<video>` comentada (marca "VIDEO:"); los archivos van en `video\` (ver `video\LEEME.md`). No se deja un `<video>` apuntando a un archivo que no existe.
 4. **Descargas** apuntan a `releases/download/v1.0.0-prueba/Lycan-Face-Control-1.0.0-Windows-64-bits.exe` y `...-portable.zip` (nombres confirmados en `.github/workflows/windows.yml` y `version.py` = 1.0.0). Quedan vivos cuando se publique el release.
 5. **Tono**: sin "gratis" (decisión general 3: "código abierto" y "sin costo de licencia"). La historia de familia se cuenta sin nombres ni detalles ("alguien muy querido vivió la ELA"). Sección "Con honestidad" con los límites (no sigue la mirada, párpados, administrador, versión de prueba probada con caras dibujadas).
-6. **Pendiente para quien arma el sitio**: `armar_sitio.py` todavía no copia `lycan-face-control\` (hoy copia solo `lycan-mouse-control\`) ni lo agrega al sitemap; hace falta el mismo `shutil.copytree(..., ignore=shutil.ignore_patterns("*.md", "*.py", ...))` y la URL `lycan-face-control/` en `urls`. El enlace "← Volver a los proyectos" va a `../#cadcam`, como el de Mouse Control.
+6. **(Resuelto el 2026-11-14: `armar_sitio.py` ya copia `lycan-face-control\` sin los .md y lo pone en el sitemap.)** Antes: `armar_sitio.py` todavía no copiaba `lycan-face-control\` (hoy copia solo `lycan-mouse-control\`) ni lo agrega al sitemap; hace falta el mismo `shutil.copytree(..., ignore=shutil.ignore_patterns("*.md", "*.py", ...))` y la URL `lycan-face-control/` en `urls`. El enlace "← Volver a los proyectos" va a `../#cadcam`, como el de Mouse Control.
 
 ## Video tutorial (2026-11-14)
 
@@ -308,3 +308,10 @@ Decisiones tomadas sin poder consultar (el usuario dormía). Cada una tiene su p
 3. **Voz**: `es-CO-GonzaloNeural` (edge-tts 7.3.1 funcionó), ritmo −4 %. Duración 3:50. Sin la palabra «gratis».
 4. **Contenido**: solo lo que dice el manual: para quién es, instalar y aviso de Windows, acomodar la cámara, calibración, ventana principal, mover, clic quieto, boca, cejas, parpadeo natural (nunca hace clic), barra, desplazar, teclado (frases rápidas, sugerencias, Hablar), barrido, pausar/reanudar, seguridad sin cara, atajos del cuidador y cierre con la dirección del manual.
 5. **Se nota en las capturas** (no se cambió el programa en esta tarea): con la ventana del teclado a 1196×720 algunos rótulos quedan cortados («¡Ayuda, llamen a alguien!», «Deshacer», «Espacio» en barrido).
+
+## Revisión final de completitud (2026-11-14)
+
+1. Pruebas: 669 en verde (`py -3.10 -m pytest -q pruebas`, 1 manual excluida). `py -3.10 -m lycan_face_control --check` correcto (FaceMesh 478 puntos con la cara dibujada, 2 voces).
+2. Nombres de descarga coherentes en tres lugares: `.iss` (`Lycan-Face-Control-{version}-Windows-64-bits`), workflow (`Lycan-Face-Control-{version}-portable.zip`) y la web (`releases/download/v1.0.0-prueba/...`), con `version.py` = 1.0.0 y `version_info.txt` = 1.0.0.
+3. Sitio armado y en commit local (`3b3a631`), sin cambios pendientes al volver a armarlo; todos los dibujos y archivos del video que usa el manual existen.
+4. Queda como riesgo conocido (no se tocó sin poder verlo): rótulos largos cortados en el teclado cuando la ventana es pequeña (punto 5 del video). Se revisa en la prueba manual.
