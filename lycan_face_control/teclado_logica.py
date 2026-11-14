@@ -404,6 +404,16 @@ class Caja:
 
 ACCIONES = ("borrar", "palabra", "deshacer", "copiar", "limpiar", "frases", "barrido", "pausa", "ayuda", "cerrar")
 ACCIONES_TEXTO = ("hablar", "repetir", "escribir")
+# ---- 1.1 paquete A: Minimizar el teclado ----
+# Va arriba a la derecha (en la fila del texto, como el «minimizar» de una ventana de Windows): en la
+# fila de acciones no cabía con letra de 20 pt en una pantalla de 1366 × 768. No se ofrece con
+# barrido ni con «Solo comunicación» (quien solo parpadea no podría volver a abrirlo).
+ACCION_MINIMIZAR = "minimizar"
+ACCIONES = ACCIONES + (ACCION_MINIMIZAR,)          # todas las acciones que el teclado entiende
+ACCIONES_FILA = tuple(a for a in ACCIONES if a != ACCION_MINIMIZAR)   # las de la fila de abajo
+ACCIONES_TEXTO_MINIMIZAR = ACCIONES_TEXTO + (ACCION_MINIMIZAR,)
+PESO_ACCION_TEXTO = 1.4
+PESO_MINIMIZAR = 1.8          # «Minimizar» en negrita de 20 pt cabe aun con 1040 px de ancho
 N_SUGERENCIAS = 5
 N_RAPIDAS = 5               # frases de la fila rápida además de Sí y No
 
@@ -443,8 +453,8 @@ def _repartir(ids_anchos: list[tuple[str, float]], x0: int, y: int, ancho: int, 
 
 def disposicion(filas_teclas: list[list[Tecla]], ancho: int, alto_max: int, sep: int = SEPARACION,
                 texto_alto: int | None = None, pagina: str = "letras", filas_cuerpo: list | None = None,
-                acciones: tuple = ACCIONES, n_sugerencias: int = N_SUGERENCIAS,
-                n_rapidas: int = N_RAPIDAS) -> Disposicion:
+                acciones: tuple | None = None, n_sugerencias: int = N_SUGERENCIAS,
+                n_rapidas: int = N_RAPIDAS, acciones_texto: tuple = ACCIONES_TEXTO) -> Disposicion:
     """Medidas de todo el teclado dentro de ``ancho`` × ``alto_max`` píxeles.
 
     Filas, de arriba abajo:
@@ -454,8 +464,12 @@ def disposicion(filas_teclas: list[list[Tecla]], ancho: int, alto_max: int, sep:
       4. el cuerpo: filas de letras (``pagina="letras"``) o ``filas_cuerpo`` = [[(id, peso), ...], ...]
          (página de frases);
       5. ``acciones``.
+    ``acciones_texto`` = los botones junto al texto (``ACCIONES_TEXTO_MINIMIZAR`` agrega
+    «Minimizar» al final, arriba a la derecha).
     La altura de las teclas es la mayor que quepa entre 80 y 112 px. Si ni con 80 px cabe,
     se queda en 80 (la ventana crece; nunca se achican las teclas por debajo del mínimo)."""
+    if acciones is None:
+        acciones = ACCIONES_FILA
     if pagina == "letras":
         cuerpo = [[(t.id, t.ancho) for t in fila] for fila in filas_teclas]
     else:
@@ -469,7 +483,8 @@ def disposicion(filas_teclas: list[list[Tecla]], ancho: int, alto_max: int, sep:
     y = sep
     util = ancho - 2 * sep
     # 1. texto + botones grandes
-    fila = _repartir([("texto", 6.0)] + [(f"accion:{a}", 1.4) for a in ACCIONES_TEXTO], sep, y, util, th, sep)
+    fila = _repartir([("texto", 6.0)] + [(f"accion:{a}", PESO_MINIMIZAR if a == ACCION_MINIMIZAR else PESO_ACCION_TEXTO)
+                                         for a in acciones_texto], sep, y, util, th, sep)
     d.filas.append(("texto", fila))
     y += th + sep
     # 2. Sí, No y frases rápidas (Sí y No más anchos y separados por las frases)

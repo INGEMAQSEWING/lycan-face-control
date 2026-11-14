@@ -468,6 +468,12 @@ class Motor(threading.Thread):
                                                      o[3] if len(o) > 3 else None))
         elif nombre == "soltar":
             self.salida.soltar_todo(arg or "orden")
+            self._aplicar(m.cancelar_lupa(t))          # 1.1: la lupa abierta se cierra sin clic
+        # ---- 1.1 paquete A: lupa ----
+        elif nombre == "lupa_cerrar":
+            self._aplicar(m.cancelar_lupa(t))
+        elif nombre == "lupa_fallo":
+            self._aplicar(m.lupa_fallo(t))
         elif nombre == "camara_perdida":
             self.salida.soltar_todo("cámara perdida")       # el aviso lo da _vigilar_camara
         elif nombre == "error_externo":

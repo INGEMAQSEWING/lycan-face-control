@@ -52,6 +52,9 @@ TECLADO = "TECLADO"
 BARRIDO = "BARRIDO"
 SOLO_COMUNICACION = "SOLO_COMUNICACION"
 SUBMODOS = (NORMAL, ARRASTRE_INICIO, ARRASTRANDO, DESPLAZAR, TECLADO, BARRIDO, SOLO_COMUNICACION)
+# ---- 1.1 paquete A: lupa para el clic preciso (la ventana agrandada está abierta) ----
+LUPA = "LUPA"
+SUBMODOS = SUBMODOS + (LUPA,)
 
 # ---- Colores (contraste >= 7:1 sobre el fondo) ----
 FONDO = "#0b1a36"
@@ -107,6 +110,12 @@ BOTONES_BARRA = (
     ("desplazar", "Desplazar"),
     ("teclado", "Teclado"),
     ("pausa", "Pausa"),
+)
+# ---- 1.1 paquete A: Sin clic (modo lectura), Lupa (clic preciso) y Minimizar ----
+BOTONES_BARRA = BOTONES_BARRA + (
+    ("sin_clic", "Sin clic"),
+    ("lupa", "Lupa"),
+    ("minimizar", "Minimizar"),
 )
 
 # ---- Gestos y acciones asignables (sección 5.4) ----

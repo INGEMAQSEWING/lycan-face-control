@@ -22,6 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from . import constantes as K
+from . import lupa as lupa_mod
 from .acciones import Aviso, Bajar, Clic, Elegir, Mover, Rueda, Sonido, SoltarTodo, Subir
 from .config import calibracion_activa
 from .gestos import (DobleParpadeoLargo, GestoCorto, GestoLargo, Gestos, ParpadeoLargo, ParpadeoListo,
@@ -96,6 +97,9 @@ VENTANA_ERRORES_S = 60.0
 
 ACCIONES_CLIC = ("clic", "clic_izq", "clic_der", "doble", "arrastrar")
 MODOS_CLIC = ("izq", "doble", "der", "arrastrar", "desplazar")
+# ---- 1.1 paquete A: «Sin clic» (modo lectura) y «Lupa» (clic preciso) ----
+MODOS_CLIC = MODOS_CLIC + ("ninguno", "lupa")
+ID_BARRA_MOSTRAR = "ui:barra_mostrar"     # pestaña de la barra minimizada: se elige también en pausa
 SUBMODOS_SIN_PUNTERO = (K.BARRIDO, K.SOLO_COMUNICACION)
 
 
@@ -178,6 +182,7 @@ class Maquina:
         self._t_desp_inicio = None
         self._desarmar_hasta = None
         self._clic_gesto_congelado = False
+        self._lupa = None                         # {"zona", "ventana", "imagen", "t0"} con la lupa abierta
 
     # ------------------------------------------------------------ armado
     def _construir(self, conservar_pos: bool = False):
@@ -230,7 +235,10 @@ class Maquina:
             self.mapeo.recentrar(*yaw0_pitch0)   # conserva el centro tomado sin calibrar
         if self.submodo in (K.ARRASTRE_INICIO, K.ARRASTRANDO, K.DESPLAZAR):
             self.submodo = K.NORMAL
-        self.modo_clic = "izq"
+        if self.submodo == K.LUPA:
+            self._cerrar_lupa(acciones)
+        # «Sin clic» dura hasta que la persona elija otro modo (cambiar una opción no lo quita)
+        self.modo_clic = "ninguno" if self.modo_clic == "ninguno" else "izq"
         if t is not None:
             self.puntero.reiniciar_filtros(t)
             self._desarmar_tras_deslizar(t)
@@ -418,6 +426,8 @@ class Maquina:
 
     # ------------------------------------------------------------ transiciones internas
     def _salir_de_submodos_con_boton(self, acc: list):
+        if self.submodo == K.LUPA:
+            self._cerrar_lupa(acc)
         if self.submodo == K.ARRASTRANDO:
             acc.append(Subir(K.IZQ))
         if self.submodo in (K.ARRASTRE_INICIO, K.ARRASTRANDO, K.DESPLAZAR):
@@ -699,7 +709,8 @@ class Maquina:
             if any(isinstance(e, DobleParpadeoLargo) for e in g.eventos):
                 self._reanudar(t, "doble parpadeo", acc)
                 return EstadoPermanencia()
-        candidatos = [o for o in self._objetivos_libres(pos, t) if o.id in IDS_REANUDAR and o.elegible]
+        candidatos = [o for o in self._objetivos_libres(pos, t)
+                      if o.id in IDS_REANUDAR + (ID_BARRA_MOSTRAR,) and o.elegible]
         obj = buscar_objetivo(pos, candidatos, self._obj_actual)
         self._obj_actual = obj
         if g.gesto_activo:
@@ -708,6 +719,8 @@ class Maquina:
         st = self.perm.actualizar(pos, t, obj, libre=False, tiempo_objetivo_s=REANUDAR_PERMANENCIA_S)
         if st.disparo and st.objetivo:
             acc.append(Elegir(st.objetivo))
+            if st.objetivo == ID_BARRA_MOSTRAR:
+                return st                  # abrir la barra minimizada no reanuda
             self._reanudar(t, "botón Reanudar", acc)
         return st
 
@@ -815,6 +828,9 @@ class Maquina:
         if sub in SUBMODOS_SIN_PUNTERO:
             self.perm.reiniciar()
             return EstadoPermanencia()
+        # ---- lupa abierta ----
+        if sub == K.LUPA:
+            return self._paso_lupa(t, pos, afuera, acc)
         # ---- permanencia ----
         if self.puntero.congelado or afuera:
             self.perm.reiniciar()
@@ -829,6 +845,8 @@ class Maquina:
             obj = buscar_objetivo(pos, self._objetivos_libres(pos, t), self._obj_actual)
         self._obj_actual = obj
         libre = bool(self._p_cfg["activa"]) and (sub == K.ARRASTRANDO or not sobre_ventana_propia(pos, self.objetivos))
+        if self.modo_clic == "ninguno" and sub == K.NORMAL:
+            libre = False           # «Sin clic»: quedarse quieto fuera de lo propio no hace nada
         tiempo_obj = None
         if obj is not None:
             if obj.id.startswith(("tecla:", "frase:", "sugerencia:", "accion:")):
@@ -957,6 +975,14 @@ class Maquina:
             acc.append(Aviso("arrastre_fin"))
             return
         modo = self.modo_clic
+        if modo == "lupa":
+            self._abrir_lupa(t, pos, acc)
+            return
+        if modo == "ninguno":
+            # «Sin clic»: solo llega aquí un gesto de clic (es a propósito) y el modo sigue
+            acc.append(Clic(K.IZQ))
+            self.perm.marcar_disparo(pos, t)
+            return
         if modo == "doble":
             acc.append(Clic(K.IZQ, 2))
         elif modo == "der":
@@ -981,6 +1007,9 @@ class Maquina:
         if accion in ACCIONES_CLIC or accion == "elegir":
             if sub == K.DESPLAZAR:
                 self._terminar_desplazar(t, acc)
+                return
+            if sub == K.LUPA:
+                self._gesto_en_lupa(t, pos, acc)
                 return
             if sub != K.ARRASTRANDO:
                 obj = buscar_objetivo(pos, self.objetivos, self._obj_actual)
@@ -1026,8 +1055,30 @@ class Maquina:
 
     def _elegir(self, ident: str, t: float, pos, acc: list):
         """Un objetivo propio elegido (permanencia o gesto). Nunca es un clic de Windows."""
+        if ident == lupa_mod.ID_ZONA:
+            if self.submodo == K.LUPA:
+                self._clic_lupa(t, pos, acc)
+            return
         acc.append(Elegir(ident))
         self._sonido("clic", acc)
+        modo_antes = self.modo_clic
+        if self.submodo == K.LUPA and ident != ID_BARRA_MOSTRAR:
+            # cualquier otro botón con la lupa abierta la cierra primero, sin clic
+            self._cerrar_lupa(acc)
+            if ident == lupa_mod.ID_CERRAR:
+                return
+        if ident in ("barra:sin_clic", "barra:lupa"):
+            modo = "ninguno" if ident == "barra:sin_clic" else "lupa"
+            if self.submodo in (K.ARRASTRE_INICIO, K.DESPLAZAR):
+                self._terminar_desplazar(t, acc)
+                self.submodo = K.NORMAL
+            if modo_antes == modo:              # elegirlo otra vez (también con la lupa abierta) lo apaga
+                self.modo_clic = "izq"
+            else:
+                self.modo_clic = modo
+                if modo == "ninguno":
+                    acc.append(Aviso("sin_clic"))
+            return
         if ident == "barra:clic":
             if self.submodo in (K.ARRASTRE_INICIO, K.DESPLAZAR):
                 self._terminar_desplazar(t, acc)
@@ -1055,6 +1106,138 @@ class Maquina:
             self._pausar(t, "cuidador" if self._por_cuidador else "botón Pausa", acc)
         elif ident == "barra:teclado":
             acc.append(Aviso("teclado"))
+
+    # ------------------------------------------------------------ lupa (1.1 paquete A)
+    def cancelar_lupa(self, t: float | None = None) -> list:
+        """Opciones abiertas o cualquier «soltar todo» de la interfaz: la lupa se cierra sin clic."""
+        acc: list = []
+        if self.submodo == K.LUPA:
+            self._cerrar_lupa(acc)
+        return acc
+
+    def lupa_fallo(self, t: float | None = None) -> list:
+        """La interfaz no pudo agrandar la zona (pantalla protegida, error de la captura): se
+        vuelve a NORMAL sin hacer ningún clic."""
+        acc: list = []
+        if self.submodo == K.LUPA:
+            self.submodo = K.NORMAL
+            self._lupa = None
+            self._volver_modo_clic()
+            self.perm.reiniciar()
+            acc.append(Aviso("lupa_no_captura"))
+            log.info("La lupa no pudo capturar la zona: no se hace clic")
+        return acc
+
+    def _abrir_lupa(self, t: float, pos, acc: list):
+        """La permanencia libre (o el gesto de clic) en el modo «Lupa»: en vez de hacer clic se
+        abre la lupa alrededor del punto."""
+        c = self.cfg.get("lupa") or {}
+        mon = self.mapeo.monitor
+        area = mon.trabajo if getattr(mon, "trabajo", None) else mon.rect
+        self.perm.marcar_disparo(pos, t)
+        try:
+            zona = lupa_mod.zona(pos, mon.rect, c.get("zona_px", 200))
+            ub = lupa_mod.ubicar_ventana(zona, area, c.get("aumento", 3))
+        except (TypeError, ValueError, IndexError):
+            zona = ub = None
+        if ub is None:
+            acc.append(Aviso("lupa_no_captura"))
+            self._volver_modo_clic()
+            log.info("La lupa no cabe sin tapar la zona: no se abre")
+            return
+        self._lupa = {"zona": zona, "ventana": ub.ventana, "imagen": ub.imagen, "t0": t}
+        self.submodo = K.LUPA
+        self._obj_actual = None
+        acc.append(Elegir(lupa_mod.id_abrir(zona, ub)))
+        log.info("Lupa abierta")
+
+    def _cerrar_lupa(self, acc: list, aviso: bool = True):
+        """Cierra la lupa SIN hacer clic (Cerrar lupa, tiempo vencido, pausa, sin cara, mirando
+        afuera, calibración, teclado, Opciones o cualquier «soltar todo»)."""
+        if self.submodo != K.LUPA and self._lupa is None:
+            return
+        if self.submodo == K.LUPA:
+            self.submodo = K.NORMAL
+        self._lupa = None
+        acc.append(Elegir(lupa_mod.ID_CERRAR))
+        if aviso:
+            acc.append(Aviso("lupa_cerrada"))
+        self._volver_modo_clic()
+        self.perm.reiniciar()
+        log.info("Lupa cerrada sin clic")
+
+    def _zona_lupa(self):
+        return next((o for o in self.objetivos if o.id == lupa_mod.ID_ZONA), None)
+
+    def _clic_lupa(self, t: float, pos, acc: list):
+        """Clic en el punto real que corresponde al punto de la imagen agrandada."""
+        lp = self._lupa
+        if lp is None:
+            return
+        zobj = self._zona_lupa()
+        imagen = zobj.rect if zobj is not None else lp["imagen"]
+        x, y = lupa_mod.a_pantalla(pos, imagen, lp["zona"])
+        acc.append(Mover(x, y))
+        acc.append(Clic(K.IZQ))
+        self.submodo = K.NORMAL
+        self._lupa = None
+        acc.append(Elegir(lupa_mod.ID_CERRAR))
+        # el puntero queda en el punto real y vuelve deslizándose a donde apunta la cabeza: ese
+        # deslizamiento no arma la permanencia
+        self.puntero.fijar_posicion(x, y, t)
+        self._desarmar_tras_deslizar(t)
+        self.perm.marcar_disparo(self.puntero.posicion, t)
+        self._volver_modo_clic()
+        log.info("Clic con la lupa")
+
+    def _gesto_en_lupa(self, t: float, pos, acc: list):
+        """Un gesto de clic con la lupa abierta: sobre un botón lo elige; sobre la imagen hace el
+        clic preciso; en cualquier otra parte no hace nada."""
+        otros = [o for o in self.objetivos if o.id != lupa_mod.ID_ZONA]
+        obj = buscar_objetivo(pos, otros, self._obj_actual)
+        if obj is not None:
+            self._elegir(obj.id, t, pos, acc)
+            self.perm.marcar_disparo(pos, t)
+            return
+        zobj = self._zona_lupa()
+        if zobj is not None and zobj.contiene(*pos):
+            self._sonido("clic", acc)
+            self._clic_lupa(t, pos, acc)
+
+    def _paso_lupa(self, t: float, pos, afuera: bool, acc: list) -> EstadoPermanencia:
+        """Con la lupa abierta el puntero se mueve igual que siempre. Quedarse quieto sobre la
+        imagen hace el clic preciso; sobre «Cerrar lupa» (u otro botón) lo elige."""
+        lp = self._lupa
+        if lp is None:
+            self.submodo = K.NORMAL
+            return EstadoPermanencia()
+        espera = float((self.cfg.get("lupa") or {}).get("espera_s", 8.0))
+        if afuera or t - lp["t0"] >= espera - 1e-9:
+            self._cerrar_lupa(acc)
+            return EstadoPermanencia()
+        if self.puntero.congelado or (self.puntero.modo == "joystick" and self.puntero.joystick_moviendo):
+            self.perm.reiniciar()
+            return EstadoPermanencia()
+        zobj = self._zona_lupa()
+        otros = [o for o in self._objetivos_libres(pos, t) if o.id != lupa_mod.ID_ZONA]
+        obj = buscar_objetivo(pos, otros, self._obj_actual)
+        self._obj_actual = obj
+        libre = obj is None and zobj is not None and zobj.contiene(*pos) and bool(self._p_cfg["activa"])
+        tiempo_obj = self.cfg["barra"]["permanencia_s"] if obj is not None else None
+        if self._desarmar_hasta is not None:
+            if t < self._desarmar_hasta:
+                self.perm.desarmar(pos)
+            else:
+                self._desarmar_hasta = None
+        st = self.perm.actualizar(pos, t, obj, libre, tiempo_obj)
+        if st.disparo:
+            if st.objetivo:
+                self._elegir(st.objetivo, t, pos, acc)
+            else:
+                if self._p_cfg.get("sonido", True):
+                    self._sonido("clic", acc)
+                self._clic_lupa(t, pos, acc)
+        return st
 
     # ------------------------------------------------------------ vista
     def _vista(self, t: float, g: ResultadoGestos, st: EstadoPermanencia, m) -> Vista:

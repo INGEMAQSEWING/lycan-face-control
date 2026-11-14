@@ -120,7 +120,7 @@ def test_desplazar_tiene_tope_aunque_siga_inclinado():
 def test_velocidad_baja_igual_llega_a_los_bordes():
     from lycan_face_control.ui.opciones import sens_de_velocidad
     for n in (1, 2, 3):
-        sx, sy = sens_de_velocidad(n)
+        sx, sy, _jg = sens_de_velocidad(n)
         cfg = cfg_prueba(**{"puntero.sens_x": sx, "puntero.sens_y": sy})
         from lycan_face_control.mapeo import MONITOR_REFERENCIA as M
         mp = MapeoCabeza.desde_config(cfg, M, CAL_SINTETICA)

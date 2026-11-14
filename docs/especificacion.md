@@ -314,9 +314,12 @@ Cada paso tiene instrucciones grandes, voz opcional (apagada por defecto en la c
 | `TECLADO` | botón "Teclado" o atajo | Igual que `NORMAL`, pero sobre el teclado la permanencia elige teclas por objetivo | cerrar el teclado |
 | `BARRIDO` | teclado en modo barrido | El puntero **no** se mueve (o se oculta el anillo); el barrido avanza solo; `ParpadeoLargo` elige; otros gestos según asignación (p. ej. boca = Borrar) | tecla "Salir del barrido" o cerrar el teclado |
 | `SOLO_COMUNICACION` | opción "Mouse apagado" | Como `BARRIDO` pero sin salir al ratón; pensado para ELA avanzada | Opciones o atajo |
+| `LUPA` (1.1) | permanencia libre (o gesto de clic) con `modo_clic = "lupa"` | La máquina **no** hace clic: emite `Elegir("lupa:abrir@zona@ventana@imagen")` (`lupa.py`: zona de `lupa.zona_px` alrededor del punto, ventana de hasta el 70 % del alto en el lado opuesto, **nunca tapa la zona**). El puntero se mueve igual. Quieto `permanencia.tiempo_s` sobre `lupa:zona` (o gesto de clic) → `Mover` al punto real (`a_pantalla`) + `Clic(izq)` + `Elegir("lupa:cerrar")`; desarma tras deslizar y vuelve a `izq` (con `modo_fijo` sigue en `lupa`) | clic hecho; «Cerrar lupa», `lupa.espera_s` sin elegir, pausa, sin cara (300 ms), "mirando afuera", calibración, teclado, Opciones, otra configuración u otro botón: se cierra **sin clic** (aviso "Cerré la lupa sin hacer clic."). Si la captura falla o no cabe: aviso y `NORMAL` |
 
 ### 5.3 `modo_clic` (lo fija la barra)
-`izq` (por defecto), `doble`, `der`, `arrastrar` (lleva a `ARRASTRE_INICIO`), `desplazar`. Por defecto es **de un solo uso**: tras usarse vuelve a `izq`. Opción "dejar fijo" (`barra.modo_fijo = true`). El botón activo se ve resaltado en la barra.
+`izq` (por defecto), `doble`, `der`, `arrastrar` (lleva a `ARRASTRE_INICIO`), `desplazar`, y en la 1.1 `ninguno` («Sin clic», modo lectura) y `lupa`.
+- **`ninguno` (Sin clic)**: quedarse quieto **fuera** de las ventanas propias no hace nada (ni clic, ni sonido, ni anillo; el indicador dice "Sin clic"). Sobre los botones propios la permanencia sigue (para salir con «Clic»). Los gestos de clic **sí** hacen clic (son a propósito) y el modo sigue. Dura hasta elegir «Clic» u otro modo: `modo_fijo`, pausar, reanudar y cambiar Opciones no lo quitan. El puntero sigue la cabeza (no es pausa).
+- **`lupa`**: ver `LUPA` en 5.2. Por defecto es **de un solo uso**: tras usarse vuelve a `izq`. Opción "dejar fijo" (`barra.modo_fijo = true`). El botón activo se ve resaltado en la barra.
 - `doble`: `Clic('izq', 2)` con el intervalo de `GetDoubleClickTime()/3`.
 - Clic izquierdo y derecho: `Bajar` y `Subir` en el **mismo** `SendInput` (nunca queda presionado).
 
@@ -352,17 +355,20 @@ Principios: todo se puede usar **solo con la cabeza** (cada control propio es un
 - Botones de 96 px (rango 72 a 140), separación 12 px, ícono + texto: **Clic, Doble, Derecho, Arrastrar, Desplazar, Teclado, Pausa**.
 - Posición: derecha en vertical (por defecto), izquierda, arriba, abajo; se aparta del borde 8 px; siempre encima.
 - Elegir un botón = permanencia por objetivo (`barra.permanencia_s`, 1,0 por defecto) o gesto de clic con el puntero encima. **Nunca** hace clic en lo que está detrás.
-- Opción "ocultar barra" (queda una pestaña de 24 px que al recibir permanencia la muestra).
+- 1.1: también **Sin clic** (⊘), **Lupa** (⊕) y **Minimizar** (▁) al final (los dos primeros se pueden quitar: `barra.boton_sin_clic`, `barra.boton_lupa`). Si no caben en una columna (o fila) sin bajar de 72 px, se arman en **dos columnas**, de arriba abajo y luego al lado (`medidas_barra` devuelve también las columnas). Con el teclado abierto la barra no muestra Sin clic ni Lupa (cabe en una columna y el teclado conserva su ancho).
+- **Minimizar** esconde la barra y deja la pestaña «Barra» en el mismo borde (al menos 56 × 120 px, o 120 × 56 en horizontal, letra de 18 pt). Quieto **0,6 s** sobre la pestaña (`ui:barra_mostrar`, también en `PAUSA`) o el ratón del cuidador la abren. Lo minimizado **no se guarda**: al abrir manda `barra.visible` ("Mostrar la barra al abrir"). En `DESPLAZAR` no hay Minimizar y la barra siempre se ve ("Terminar").
 
 ### 6.3 Indicador del cursor (`ui/indicador.py`)
-Toplevel sin bordes, atravesable, siempre encima, junto al cursor: anillo de permanencia (cian, 4 px de grosor, 48 px), barra de cierre de ojos (se llena; al llegar, cambia a verde "Abra los ojos"), etiqueta del `modo_clic` cuando no es `izq` ("Doble", "Derecho", "Arrastrando").
+Toplevel sin bordes, atravesable, siempre encima, junto al cursor: anillo de permanencia (cian, 4 px de grosor, 48 px), barra de cierre de ojos (se llena; al llegar, cambia a verde "Abra los ojos"), etiqueta del `modo_clic` cuando no es `izq` ("Doble", "Derecho", "Arrastrando"; 1.1: "Sin clic", "Lupa").
 
 ### 6.4 Teclado en pantalla (`ui/teclado.py`), ver sección 7
 Ventana grande (por defecto la mitad inferior de la pantalla; se puede mover arriba), con: área de texto (letra 28 pt), fila de sugerencias, filas de teclas, fila de acciones, panel de frases rápidas (pestaña o columna), botones **Sí** y **No** grandes y separados siempre visibles.
+- 1.1: **Minimizar** (arriba a la derecha, junto a Hablar/Repetir/Escribir) esconde el teclado sin borrar lo escrito, vuelve a `NORMAL` y deja la pestaña «Teclado» (al menos 160 × 56 px) en su borde. Quieto 0,6 s sobre la pestaña (`ui:teclado_mostrar`), «Teclado» en la barra o el atajo lo **restauran** con el texto tal como estaba. «Cerrar» sigue cerrando. Con barrido o «Solo comunicación» **no se ofrece** (ni en la ventana ni en el barrido).
 
 ### 6.5 Calibración (`ui/calibracion.py`): ver 4.1. Pantalla completa opcional, con dibujo de la cara que indica qué hacer.
 
 ### 6.6 Opciones (`ui/opciones.py`)
+1.1: en **Puntero**, la velocidad 1–10 se elige con dos botones grandes «◀ Más lento» / «Más rápido ▶» (76 px de alto) y "3 de 10" en el centro; escribe juntos `sens_x`, `sens_y = sens_x × ajuste_vertical` (entre 0,92 y 3,3) y `joystick_g` (tabla `JOYSTICK_VELOCIDAD`); no hay clave nueva (se deduce de `sens_x`) y la calibración no cambia. Debajo, "Velocidad arriba y abajo" (`puntero.ajuste_vertical`, 0,8–2,0, en %). En **Clic**: la lupa (aumento, tamaño de la zona, espera). En **Comodidad**: botones «Sin clic» y «Lupa» en la barra.
 Pestañas con vista previa en vivo y "Cancelar" que revierte: **Puntero** (sensibilidad x/y, suavidad, zona muerta, aceleración, modo absoluto/joystick, monitor), **Clic** (permanencia sí/no, tiempo, radio, recuperación, sonido, modo de la barra fijo/un uso), **Gestos** (encender/apagar cada uno, sensibilidad, sostener, acción corta y larga, barras en vivo con "Probar"), **Teclado y voz** (distribución, permanencia del teclado, barrido sí/no y velocidad, voz, volumen, velocidad, "Probar voz", modo Mensaje/Directo), **Frases** (abre el editor), **Comodidad** (tamaño de letra, alto contraste, posición de la barra, indicador del borde, aviso de descanso, abrir al encender, arrancar activo o en pausa, mostrar video), **Atajos**. Todos los controles son botones grandes de "−" y "+" (no deslizadores finos), para que sean operables con la cabeza. "Volver a los valores de fábrica" pide confirmación.
 
 ### 6.7 Ayuda (`ui/ayuda.py`)
@@ -473,6 +479,8 @@ Archivo `frases.json` (validado; texto 1 a 200 caracteres; máximo 12 categoría
 }
 ```
 
+1.1 paquete A (bloque aparte al final de `FABRICA`; una configuración 1.0 sin estas claves toma estos valores sin anotar problemas): `puntero.ajuste_vertical` = 1,2; `barra.boton_sin_clic` = true; `barra.boton_lupa` = true; `lupa` = `{"zona_px": 200, "aumento": 3, "espera_s": 8.0}`.
+
 `calibracion` de un perfil: `{"fecha", "centro": [yaw0, pitch0], "izq", "der", "arr", "aba", "signo_x", "signo_y", "base": {"ear_der", "ear_izq", "mar", "cejas", "sonrisa"}, "umbrales": {...}, "parpadeo_natural_max_ms", "parpadeos_min"}`.
 
 ### 9.1 Rangos (`RANGOS`; fuera de rango ⇒ valor de fábrica + registro)
@@ -495,6 +503,8 @@ Archivo `frases.json` (validado; texto 1 a 200 caracteres; máximo 12 categoría
 | seguridad.soltar_sin_cara_ms | 150–1000 | seguridad.pausa_sin_cara_s | 3–60 |
 | seguridad.arrastre_max_s | 10–300 | comodidad.escala_letra | 1,0–2,0 |
 | comodidad.descanso_min | 0 o 10–120 (`MINIMO_SI_NO_CERO`) | | |
+| puntero.ajuste_vertical (1.1) | 0,8–2,0 | lupa.zona_px (1.1) | 120–400 (entero) |
+| lupa.aumento (1.1) | 2–5 (entero) | lupa.espera_s (1.1) | 4,0–20,0 |
 
 `OPCIONES`: `puntero.modo` ∈ {absoluto, joystick}; `barra.posicion` ∈ {derecha, izquierda, arriba, abajo}; `teclado.distribucion` ∈ {auto, qwerty, frecuencia}; `teclado.modo_escritura` ∈ {mensaje, directo}; `teclado.posicion` ∈ {abajo, arriba}; `teclado.genero` ∈ {neutro, masculino, femenino}; `arranque.estado` ∈ {auto, activo, pausa}; acciones de gestos ∈ lista de 5.4. Si dos gestos activos quedan sin ninguna forma de reanudar (por ejemplo, ningún gesto con `pausar` y sin permanencia), la validación **vuelve a encender** la permanencia sobre el botón "Reanudar" (siempre existe).
 

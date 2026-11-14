@@ -60,7 +60,9 @@ class IndicadorCursor:
             return t("ind_arrastrando")
         if m.submodo == K.DESPLAZAR:
             return t("ind_desplazar")
-        return {"doble": t("ind_doble"), "der": t("ind_der"), "arrastrar": t("ind_arrastrar")}.get(m.modo_clic, "")
+        return {"doble": t("ind_doble"), "der": t("ind_der"), "arrastrar": t("ind_arrastrar"),
+                # 1.1 paquete A
+                "ninguno": t("ind_sin_clic"), "lupa": t("ind_lupa")}.get(m.modo_clic, "")
 
     def contenido(self, vista):
         """Qué dibujar (o None): (pos, progreso_anillo, barra_ojos, ojos_listos, etiqueta,

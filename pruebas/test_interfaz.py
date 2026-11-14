@@ -73,12 +73,12 @@ def test_letras_nunca_bajan_de_16_y_escalan():
 
 
 def test_velocidad_del_puntero_1_a_10():
-    assert OP.sens_de_velocidad(3) == (1.0, 1.2)                # 3 = fábrica
+    assert OP.sens_de_velocidad(3) == (1.0, 1.2, 1200)          # 3 = fábrica (1.1: también el joystick)
     lo, hi = RANGOS["puntero.sens_x"]
     loy, hiy = RANGOS["puntero.sens_y"]
     anterior = (0.0, 0.0)
     for n in range(1, 11):
-        sx, sy = OP.sens_de_velocidad(n)
+        sx, sy, _jg = OP.sens_de_velocidad(n)
         assert lo <= sx <= hi and loy <= sy <= hiy
         assert OP.velocidad_de_sens(sx) == n
         assert sx > anterior[0] and sy > anterior[1]          # cada nivel sube en los dos ejes
@@ -670,9 +670,9 @@ def test_indicador_junto_al_cursor_contenido(app_viva):
 def test_barra_cabe_en_una_pantalla_pequena():
     from lycan_face_control.ui.barra import medidas_barra
     area = (0, 0, 1366, 728)
-    ancho, alto, sep = medidas_barra(8, 96, area, True, 70, 150)
-    assert 8 * alto + 7 * sep <= 728 - 16 and alto >= 72 and ancho >= 150
-    ancho, alto, sep = medidas_barra(7, 140, (0, 0, 1366, 728), False, 70, 150)
+    ancho, alto, sep, cols = medidas_barra(8, 96, area, True, 70, 150)      # 1.1: también las columnas
+    assert 8 * alto + 7 * sep <= 728 - 16 and alto >= 72 and ancho >= 150 and cols == 1
+    ancho, alto, sep, cols = medidas_barra(7, 140, (0, 0, 1366, 728), False, 70, 150)
     assert 7 * ancho + 6 * sep <= 1366 - 16
 
 

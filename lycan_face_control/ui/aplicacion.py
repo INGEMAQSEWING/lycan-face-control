@@ -75,6 +75,9 @@ class App:
         self.prediccion = None
         self.frases = None
         self.editor = None
+        self.lupa = None                       # 1.1: ventana de la lupa abierta (o None)
+        self._t_lupa = None
+        self._avisado_tec_minimizar = False
         self.ultima_vista = None
         self.oyentes_vista: list = []
         self.cola_atajos: queue.Queue = queue.Queue()
@@ -377,6 +380,8 @@ class App:
 
     def alternar_teclado(self):
         if self.teclado is not None:
+            if getattr(self.teclado, "minimizado", False):
+                return self.restaurar_teclado()          # 1.1: vuelve con el texto como estaba
             if self.cfg.datos["teclado"].get("solo_comunicacion"):
                 return self._al_frente(self.teclado)     # en "solo comunicación" nunca se cierra
             self.cerrar_teclado()
@@ -386,11 +391,13 @@ class App:
         except ImportError:
             self.mostrar_aviso(t("aviso_teclado_no_disponible"))
             return
+        self._barra_con_teclado(True)       # antes de que el teclado mida el espacio libre
         try:
             self.teclado = VentanaTeclado(self.root, self)
         except Exception:  # noqa: BLE001
             log.exception("No se pudo abrir el teclado")
             self.teclado = None
+            self._barra_con_teclado(False)
             self.mostrar_aviso(t("aviso_error"))
             return
         sub = K.TECLADO
@@ -407,6 +414,7 @@ class App:
         tec, self.teclado = self.teclado, None
         if tec is None:
             return
+        self._barra_con_teclado(False)
         f = getattr(tec, "cerrar", None)
         try:
             if f is not None:
@@ -422,8 +430,89 @@ class App:
         """El teclado avisa que se cerró solo."""
         if tec is None or tec is self.teclado:
             self.teclado = None
+            self._barra_con_teclado(False)
             if not self.cfg.datos["teclado"].get("solo_comunicacion"):
                 self.orden("submodo", K.NORMAL)
+
+    # ---- 1.1 paquete A: teclado minimizado ----
+    def _barra_con_teclado(self, abierto: bool):
+        f = getattr(self.barra, "poner_teclado", None)
+        if f is None:
+            return
+        try:
+            f(abierto)
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo rehacer la barra")
+
+    def restaurar_teclado(self):
+        tec = self.teclado
+        if tec is not None and hasattr(tec, "restaurar"):
+            tec.restaurar()
+        return tec
+
+    def teclado_minimizado(self, tec=None):
+        """El teclado se escondió (con su pestaña): la barra vuelve a tener todos sus botones."""
+        self._barra_con_teclado(False)
+        if not self._avisado_tec_minimizar:
+            self._avisado_tec_minimizar = True
+            self.mostrar_aviso(t("globo_tec_minimizar"), 6)
+
+    def teclado_restaurando(self, tec=None):
+        self._barra_con_teclado(True)
+
+    # ---- 1.1 paquete A: lupa ----
+    def _evento_lupa(self, ident: str) -> bool:
+        from .. import lupa as L
+        if ident.startswith(L.PREFIJO_ABRIR):
+            self.abrir_lupa(ident)
+            return True
+        if ident == L.ID_CERRAR:
+            self.cerrar_lupa()
+            return True
+        return False
+
+    def abrir_lupa(self, ident: str, capturar_fn=None):
+        """La máquina abrió la lupa: se captura la zona y se muestra agrandada. Si algo falla,
+        se avisa a la máquina (vuelve a NORMAL sin clic)."""
+        from .. import lupa as L
+        self.cerrar_lupa()
+        datos = L.leer_id(ident)
+        if datos is None or self.root is None:
+            self.orden("lupa_fallo")
+            return None
+        zona, ventana, imagen = datos
+        try:
+            from .lupa import VentanaLupa
+            self.lupa = VentanaLupa(self.root, self, zona, ventana, imagen,
+                                    capturar_fn=capturar_fn or getattr(self, "capturar_lupa", None))
+            self._t_lupa = time.monotonic()
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo agrandar la zona de la lupa")
+            self.lupa = None
+            self.orden("lupa_fallo")
+        return self.lupa
+
+    def cerrar_lupa(self, avisar_motor: bool = False):
+        lp, self.lupa = self.lupa, None
+        if lp is not None:
+            try:
+                lp.cerrar()
+            except Exception:  # noqa: BLE001
+                log.exception("No se pudo cerrar la lupa")
+        if avisar_motor:
+            self.orden("lupa_cerrar")
+
+    def _revisar_lupa(self, m):
+        """Por si se pierde un aviso: la ventana de la lupa no queda abierta si la máquina ya no
+        está en LUPA (pausa, sin cara, calibración, Opciones...)."""
+        lp = self.lupa
+        if lp is None:
+            return
+        if m is not None and m.submodo == K.LUPA and m.estado in (K.ACTIVO, K.SIN_CARA):
+            lp.visto = True
+            return
+        if lp.visto or (self._t_lupa is not None and time.monotonic() - self._t_lupa > 1.5):
+            self.cerrar_lupa()
 
     def mostrar_ventana(self):
         if self.root is None:
@@ -566,6 +655,7 @@ class App:
         self.indicador = IndicadorCursor(self.root, self)
         self.borde = BordeEstado(self.root, self)
         self.flotante = ReanudarFlotante(self.root, self)
+        self.registro.manejador("lupa:", self._evento_lupa)
         # errores dentro de callbacks de tkinter (after, command, bind): al registro y a pausa
         self.root.report_callback_exception = self._error_en_callback
         # Windows avisa que se apaga o se cierra la sesión: guardar rápido (no siempre llega a finalizar)
@@ -674,6 +764,7 @@ class App:
             except Exception:  # noqa: BLE001
                 pass
             self.flotante.actualizar(m is not None and m.estado == K.PAUSA and escondida)
+        self._revisar_lupa(m)
         if m is not None:
             self.registro.resaltar(m.objetivo)
         for f in list(self.oyentes_vista):
@@ -913,6 +1004,10 @@ class App:
             if self.ventana is not None:
                 x, y = self.ventana.posicion()
                 self.cfg.datos["ventana"]["x"], self.cfg.datos["ventana"]["y"] = int(x), int(y)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.cerrar_lupa()
         except Exception:  # noqa: BLE001
             pass
         for w in (self.indicador, self.borde, self.flotante):

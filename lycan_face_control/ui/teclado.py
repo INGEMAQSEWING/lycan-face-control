@@ -41,7 +41,7 @@ import tkinter as tk
 from .. import constantes as K
 from ..barrido import VOLVER, Barrido
 from ..frases import Frases, texto_final
-from ..teclado_logica import (ACCIONES, ACCIONES_TEXTO, MAX_TEXTO, N_RAPIDAS, N_SUGERENCIAS, NUMEROS,
+from ..teclado_logica import (ACCION_MINIMIZAR, ACCIONES_TEXTO_MINIMIZAR, ACCIONES, ACCIONES_TEXTO, MAX_TEXTO, N_RAPIDAS, N_SUGERENCIAS, NUMEROS,
                               PUNTUACION_PEGADA, Escritura, buscar_tecla, disposicion, distribucion,
                               nombre_distribucion)
 from .comun import LETRA, BotonGrande, area_de_trabajo, letra, no_activar, tema
@@ -58,6 +58,10 @@ FRASES_POR_FILA = 3
 CATEGORIAS_POR_FILA = 6
 MARGEN = 8
 SIN_CARA_FRANJA_S = 1.0        # la franja "No veo su cara" sale tras 1 s (no con cada cuadro perdido)
+# ---- 1.1 paquete A: teclado minimizado ----
+ID_PESTANA = "ui:teclado_mostrar"
+PESTANA_TIEMPO_S = 0.6         # abrir el teclado minimizado no tiene riesgo: basta poco tiempo quieto
+PESTANA_ANCHO, PESTANA_ALTO = 200, 64
 
 
 class VentanaTeclado:
@@ -88,6 +92,8 @@ class VentanaTeclado:
         self._franja_estado = None       # (clave, texto) mientras dure: pausa, sin cara, detenido
         self._franja_mostrada = None     # texto que se ve ahora en la franja
         self._detenido_mostrado = False
+        self.minimizado = False          # 1.1: escondido con la pestaña «Teclado» (lo escrito se conserva)
+        self.pestana = None
         self.prediccion = _obtener(app, "obtener_prediccion")
         self.frases = _obtener(app, "obtener_frases") or Frases()
         cfg = self.cfg
@@ -199,7 +205,8 @@ class VentanaTeclado:
             filas_cuerpo = self._filas_cuerpo_frases(len(self.filas_letras))
         teclas = NUMEROS if self.pagina == "numeros" else self.filas_letras
         self.disp = d = disposicion(teclas, ancho, alto_max, pagina="frases" if self.pagina == "frases" else "letras",
-                                    filas_cuerpo=filas_cuerpo)
+                                    filas_cuerpo=filas_cuerpo,
+                                    acciones_texto=ACCIONES_TEXTO if self._sin_minimizar() else ACCIONES_TEXTO_MINIMIZAR)
         h = d.tecla_alto
         w = self.win = tk.Toplevel(self.root)
         w.overrideredirect(True)
@@ -245,6 +252,11 @@ class VentanaTeclado:
         self._pintar_todo()
         self._preparar_barrido()
         self._actualizar_franja()
+        if self.minimizado:
+            try:
+                w.withdraw()               # rehecho (Opciones) mientras estaba minimizado: sigue escondido
+            except tk.TclError:
+                pass
 
     def reconstruir(self):
         """Opciones guardadas (distribución, barrido, tamaño...): se rehace la ventana."""
@@ -306,6 +318,8 @@ class VentanaTeclado:
             clave = "nuevo"
         elif nombre == "ayuda":
             clave = "ayuda_btn"
+        elif nombre == ACCION_MINIMIZAR:
+            clave = "minimizar"
         elif nombre == "mas_frases":
             return t("tec_mas_frases"), "▶"
         elif nombre == "mas_categorias":
@@ -556,6 +570,8 @@ class VentanaTeclado:
         # lo saca del barrido o cierra el teclado: esas dos acciones no entran al barrido (el
         # cuidador las tiene con el ratón). "Pausa" sí: se quita con dos parpadeos largos.
         fuera = ("accion:barrido", "accion:cerrar") if self._depende_del_barrido() else ()
+        # «Minimizar» nunca entra al barrido: con los párpados no se podría volver a abrir
+        fuera = fuera + (f"accion:{ACCION_MINIMIZAR}",)
         filas.append([c.id for c in d.fila("acciones") if c.id in activos and c.id not in fuera])
         return [f for f in filas if f]
 
@@ -920,6 +936,83 @@ class VentanaTeclado:
                 self.mostrar_grande(t("tec_solo_com_cerrar"), 5)
                 return
             self.app.cerrar_teclado()
+        elif nombre == ACCION_MINIMIZAR:
+            self.minimizar()
+
+    # ------------------------------------------------------------ minimizar (1.1 paquete A)
+    def _sin_minimizar(self) -> bool:
+        """Con barrido o «Solo comunicación» no se ofrece «Minimizar»: quien solo parpadea no
+        podría volver a abrir una pestaña con el puntero."""
+        return self._depende_del_barrido() or self.barrido_activo
+
+    def minimizar(self):
+        """Esconde el teclado (sin borrar lo escrito) y deja la pestaña «Teclado» en su borde.
+        El puntero vuelve a mandar (NORMAL)."""
+        if self.win is None or self.minimizado or self._sin_minimizar():
+            return
+        try:
+            x, y = self.win.winfo_rootx(), self.win.winfo_rooty()
+            w, h = self.win.winfo_width(), self.win.winfo_height()
+            self.win.withdraw()
+        except tk.TclError:
+            return
+        self.minimizado = True
+        self._crear_pestana(x, y, w, h)
+        self.app.orden("submodo", K.NORMAL)
+        f = getattr(self.app, "teclado_minimizado", None)
+        if f is not None:
+            f(self)
+
+    def restaurar(self):
+        """Vuelve a mostrar el teclado con el texto tal como estaba."""
+        if self.win is None or not self.minimizado:
+            return
+        f = getattr(self.app, "teclado_restaurando", None)
+        if f is not None:
+            f(self)
+        self.minimizado = False
+        self._quitar_pestana()
+        try:
+            self.win.deiconify()
+            self.win.lift()
+        except tk.TclError:
+            pass
+        self.app.orden("submodo", self.submodo_inicial())
+
+    def _crear_pestana(self, x: int, y: int, w: int, h: int):
+        self._quitar_pestana()
+        T = self.tema
+        reg = self.app.registro
+        p = self.pestana = tk.Toplevel(self.root)
+        p.overrideredirect(True)
+        p.attributes("-topmost", True)
+        p.configure(bg=T.fondo)
+        b = BotonGrande(p, t("tec_pestana"), reg.comando(ID_PESTANA), T, (LETRA, 20, "bold"),
+                        icono=t("icono_tec_pestana"))
+        b.pack(fill="both", expand=True)
+        reg.agregar(ID_PESTANA, b, self.restaurar, tiempo_s=PESTANA_TIEMPO_S)
+        pw, ph = PESTANA_ANCHO, max(PESTANA_ALTO, 56)
+        px = x + max((w - pw) // 2, 0)
+        if self.cfg["teclado"].get("posicion") == "arriba":
+            py = y
+        else:
+            py = y + max(h - ph, 0)
+        p.geometry(f"{pw}x{ph}+{px}+{py}")
+        reg.ventana("teclado_pestana", p)
+        no_activar(p)
+        self.boton_pestana = b
+
+    def _quitar_pestana(self):
+        p, self.pestana = self.pestana, None
+        if p is None:
+            return
+        reg = self.app.registro
+        reg.quitar(ID_PESTANA)
+        reg.quitar_ventana("teclado_pestana")
+        try:
+            p.destroy()
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------ hacia otros programas
     def _devolver_foco(self):
@@ -993,6 +1086,8 @@ class VentanaTeclado:
     # ------------------------------------------------------------ cerrar
     def cerrar(self):
         self._guardar_palabras()
+        self._quitar_pestana()
+        self.minimizado = False
         reg = self.app.registro
         reg.manejadores = [(p, f) for p, f in reg.manejadores if p != "barrido:"]
         self.destruir_ventana()

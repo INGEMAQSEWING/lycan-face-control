@@ -551,6 +551,71 @@ TXT: dict[str, str] = {
     "pausa_o": " o ",
     "ayuda_honestidad": "Si la persona pierde también el control de los párpados, hacen falta otros sistemas.",
 }
+# ---- 1.1 paquete A: velocidad, minimizar y extras de TD Control ----
+TXT.update({
+    # velocidad (pestaña Puntero)
+    "op_velocidad_valor": "{n} de 10",
+    "op_mas_lento": "◀ Más lento",
+    "op_mas_rapido": "Más rápido ▶",
+    "op_velocidad_ayuda": ("1 = más lento; 10 = rápido (basta un movimiento pequeño). Con cualquier valor se "
+                           "llega a toda la pantalla girando la cabeza dentro de su rango cómodo. La calibración "
+                           "no cambia."),
+    "op_ajuste_vertical": "Velocidad arriba y abajo",
+    "op_ajuste_vertical_igual": "Igual que a los lados",
+    "op_ajuste_vertical_valor": "{n} % de la de los lados",
+    "op_ajuste_vertical_ayuda": "Si le cuesta más subir y bajar la cabeza que girarla, súbalo.",
+    # lupa (pestaña Clic)
+    "op_lupa_aumento": "La lupa agranda",
+    "op_lupa_aumento_valor": "{n} veces",
+    "op_lupa_zona": "Tamaño de la parte que agranda la lupa",
+    "op_lupa_espera": "Si usted no hace clic, la lupa desaparece sola a los",   # «se cierra» y «elige» chocan con la regla del tuteo
+    # botones de la barra (pestaña Comodidad)
+    "op_boton_sin_clic": "Botón «Sin clic» en la barra",
+    "op_boton_lupa": "Botón «Lupa» en la barra",
+    "op_barra_visible": "Mostrar la barra al abrir",
+    # barra
+    "barra_sin_clic": "Sin clic",
+    "icono_sin_clic": "⊘",
+    "barra_lupa": "Lupa",
+    "icono_lupa": "⊕",
+    "barra_minimizar": "Minimizar",
+    "icono_minimizar": "▁",
+    "barra_mostrar": "Barra",
+    "icono_mostrar": "«",
+    "icono_mostrar_derecha": "«",
+    "icono_mostrar_izquierda": "»",
+    "icono_mostrar_arriba": "▼",
+    "icono_mostrar_abajo": "▲",
+    "globo_minimizar": ("Esconde la barra en el borde. Para volver a abrirla, deje el puntero un momento sobre "
+                        "la pestaña «Barra»."),
+    # junto al cursor
+    "ind_sin_clic": "Sin clic",
+    "ind_lupa": "Lupa",
+    # lupa
+    "lupa_titulo": "Lupa",
+    "lupa_cerrar": "Cerrar lupa",
+    "lupa_instruccion": "Lleve el puntero al punto exacto y quédese quieto para hacer clic.",
+    "aviso_lupa_no_captura": "No pude agrandar esa parte de la pantalla. Intente otra vez o use el clic normal.",
+    "aviso_lupa_cerrada": "Cerré la lupa sin hacer clic.",
+    "aviso_sin_clic": ("Sin clic: puede leer tranquilo; quedarse quieto no hace clic. Para volver, elija «Clic» "
+                       "en la barra."),
+    "sub_LUPA": "Lleve el puntero al punto exacto y quédese quieto para hacer clic.",
+    "sub_ACTIVO_ninguno": ("Sin clic: puede leer tranquilo; quedarse quieto no hace clic. Para volver, elija "
+                           "«Clic» en la barra."),
+    # teclado
+    "tec_minimizar": "Minimizar",
+    "icono_tec_minimizar": "▁",
+    "tec_pestana": "Teclado",
+    "icono_tec_pestana": "⌨",
+    "globo_tec_minimizar": "Esconde el teclado sin borrar lo escrito.",
+})
+TXT["ayuda_uso"] = TXT["ayuda_uso"] + (
+    "\n• Sin clic: para leer tranquilo; quedarse quieto no hace clic, pero los gestos de clic sí. Para "
+    "volver, elija «Clic» en la barra.\n"
+    "• Lupa: agranda la parte de la pantalla donde se quedó quieto; quédese quieto sobre el punto exacto "
+    "de la imagen grande para hacer el clic.\n"
+    "• Minimizar: esconde la barra (o el teclado) en el borde; para abrirla de nuevo, deje el puntero un "
+    "momento sobre la pestaña.")
 
 
 def t(clave: str, **kw) -> str:
@@ -643,6 +708,8 @@ def subtitulo(vista, cfg: dict | None = None) -> str:
         return TXT["sub_PAUSA"]
     if m.estado == K.ACTIVO and m.submodo != K.NORMAL:
         return TXT.get(f"sub_{m.submodo}", TXT["sub_ACTIVO"])
+    if m.estado == K.ACTIVO and getattr(m, "modo_clic", "") == "ninguno":
+        return TXT["sub_ACTIVO_ninguno"]
     if m.estado == K.ACTIVO and cfg is not None and not (cfg.get("permanencia") or {}).get("activa", True):
         g = cfg.get("gestos") or {}
         clic = any((g.get(n) or {}).get("activo") and "clic" in str((g.get(n) or {}).get("corto", ""))

@@ -34,14 +34,37 @@ ACCIONES_GESTO_UI = ("ninguna", "clic", "clic_izq", "clic_der", "doble", "arrast
 # bordes moviendo la cabeza dentro del rango cómodo calibrado (con 0,5 quedaba un tercio de la
 # pantalla fuera de alcance, incluida la barra): 1 y 2 apenas bajan, y siguen llegando a todo.
 SENS_VELOCIDAD = (0.92, 0.96, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75)
+# ---- 1.1 paquete A: la velocidad también gradúa el joystick, y arriba/abajo va aparte ----
+# Nivel 3 = 1200 (fábrica); todos caben en el rango (600, 3000) de puntero.joystick_g.
+JOYSTICK_VELOCIDAD = (1000, 1050, 1200, 1400, 1600, 1800, 2000, 2300, 2600, 3000)
+AJUSTE_VERTICAL_FABRICA = 1.2
+SENS_Y_MIN, SENS_Y_MAX = 0.92, 3.3     # por debajo de 0,92 el puntero deja de llegar a los bordes
 
 
-def sens_de_velocidad(n: int) -> tuple[float, float]:
-    """Velocidad 1..10 -> (sens_x, sens_y). 3 = valores de fábrica (1,0 y 1,2)."""
-    n = min(max(int(n), VELOCIDAD_MIN), VELOCIDAD_MAX)
+def _ajuste_valido(ajuste_vertical) -> float:
+    lo, hi = RANGOS["puntero.ajuste_vertical"]
+    try:
+        a = float(ajuste_vertical)
+    except (TypeError, ValueError):
+        return AJUSTE_VERTICAL_FABRICA
+    if a != a or not lo <= a <= hi:
+        return AJUSTE_VERTICAL_FABRICA
+    return a
+
+
+def sens_de_velocidad(n: int, ajuste_vertical: float = AJUSTE_VERTICAL_FABRICA) -> tuple[float, float, int]:
+    """Velocidad 1..10 -> (sens_x, sens_y, joystick_g). 3 = valores de fábrica (1,0; 1,2; 1200).
+
+    ``sens_y = sens_x × ajuste_vertical`` (entre 0,92 y 3,3). La calibración no cambia: solo las
+    ganancias."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 3
+    n = min(max(n, VELOCIDAD_MIN), VELOCIDAD_MAX)
     sx = SENS_VELOCIDAD[n - 1]
-    sy = round(min(sx * 1.2, 3.3), 2)      # tope 3,3: cada nivel sube también en vertical
-    return sx, sy
+    sy = round(max(min(sx * _ajuste_valido(ajuste_vertical), SENS_Y_MAX), SENS_Y_MIN), 2)
+    return sx, sy, JOYSTICK_VELOCIDAD[n - 1]
 
 
 def velocidad_de_sens(sens_x: float) -> int:
@@ -112,6 +135,17 @@ def _veces(v):
     return _decimal(float(v)) + " ×"
 
 
+def _ajuste_vertical(v):
+    v = float(v)
+    if abs(v - 1.0) < 1e-6:
+        return t("op_ajuste_vertical_igual")
+    return t("op_ajuste_vertical_valor", n=int(round(v * 100)))
+
+
+def _aumento(v):
+    return t("op_lupa_aumento_valor", n=int(round(float(v))))
+
+
 PESTANAS = ("puntero", "clic", "gestos", "teclado", "comodidad", "atajos")
 
 
@@ -119,6 +153,7 @@ def controles(pestana: str, gesto: str = "boca") -> list:
     if pestana == "puntero":
         return [
             ("vel", "puntero.sens_x", "op_velocidad", 1, None),
+            ("num", "puntero.ajuste_vertical", "op_ajuste_vertical", 0.1, _ajuste_vertical),
             ("num", "puntero.suavidad", "op_suavidad", 1, _entero),
             ("opc", "puntero.modo", "op_modo", OPCIONES["puntero.modo"],
              lambda v: t(f"op_modo_{v}")),
@@ -132,6 +167,10 @@ def controles(pestana: str, gesto: str = "boca") -> list:
             ("bool", "permanencia.sonido", "op_perm_sonido", None, None),
             ("num", "barra.permanencia_s", "op_barra_tiempo", 0.1, _seg),
             ("bool", "barra.modo_fijo", "op_barra_fijo", None, None),
+            # ---- 1.1 paquete A: lupa ----
+            ("num", "lupa.aumento", "op_lupa_aumento", 1, _aumento),
+            ("num", "lupa.zona_px", "op_lupa_zona", 20, _entero),
+            ("num", "lupa.espera_s", "op_lupa_espera", 1.0, _seg),
         ]
     if pestana == "gestos":
         if gesto == "parpadeo":
@@ -176,6 +215,8 @@ def controles(pestana: str, gesto: str = "boca") -> list:
             ("opc", "barra.posicion", "op_barra_posicion", OPCIONES["barra.posicion"], lambda v: t(f"op_pos_{v}")),
             ("num", "barra.boton_px", "op_barra_tam", 8, _entero),
             ("bool", "barra.visible", "op_barra_visible", None, None),
+            ("bool", "barra.boton_sin_clic", "op_boton_sin_clic", None, None),      # 1.1
+            ("bool", "barra.boton_lupa", "op_boton_lupa", None, None),              # 1.1
             ("bool", "comodidad.indicador_borde", "op_indicador_borde", None, None),
             ("bool", "comodidad.sonidos", "op_sonidos", None, None),
             ("num", "comodidad.descanso_min", "op_descanso", 5, _min),
@@ -214,7 +255,9 @@ def ciclar(opciones, actual, signo: int):
 
 
 # Ayuda corta que se ve debajo del nombre de algunos controles
-AYUDAS_CONTROL = {"puntero.sens_x": "op_velocidad_ayuda", "barra.modo_fijo": "op_barra_fijo_ayuda"}
+AYUDAS_CONTROL = {"puntero.sens_x": "op_velocidad_ayuda", "barra.modo_fijo": "op_barra_fijo_ayuda",
+                  "puntero.ajuste_vertical": "op_ajuste_vertical_ayuda"}
+VEL_ALTO_PX = 76            # botones «Más lento» y «Más rápido»: grandes, elegibles con la cabeza
 
 
 def _al_encender_real(app) -> bool | None:
@@ -403,7 +446,20 @@ class VentanaOpciones:
             tk.Label(fila, text=t(clave), bg=T.fondo_2, fg=T.texto, font=self._f(16, False), anchor="w",
                      wraplength=int(self.W * 0.42), justify="left").pack(side="left", padx=10, pady=6, fill="x",
                                                                         expand=True)
-        if tipo in ("num", "vel"):
+        if tipo == "vel":
+            # 1.1: «◀ Más lento»  3 de 10  «Más rápido ▶», botones de 76 px de alto
+            caja = tk.Frame(fila, bg=T.fondo_2)
+            caja.pack(side="right", padx=6, pady=4)
+            caja.grid_rowconfigure(0, minsize=VEL_ALTO_PX)      # alto mínimo, ancho según el texto
+            for col, texto, sufijo, signo in ((0, t("op_mas_lento"), "menos", -1),
+                                              (2, t("op_mas_rapido"), "mas", +1)):
+                self._boton(caja, texto, f"op:{ruta}:{sufijo}",
+                            lambda e=None, s=signo: self.cambiar(ctl, s)).grid(row=0, column=col, sticky="nsew",
+                                                                                 padx=4)
+            v = tk.Label(caja, text="", bg=T.fondo_2, fg=T.acento, font=self._f(18), width=7)
+            v.grid(row=0, column=1, sticky="nsew")
+            self.etiquetas_valor[ruta] = (v, ctl)
+        elif tipo == "num":
             self._boton(fila, "+", f"op:{ruta}:mas", lambda: self.cambiar(ctl, +1), ancho=3).pack(side="right",
                                                                                                 padx=6, pady=4)
             v = tk.Label(fila, text="", bg=T.fondo_2, fg=T.acento, font=self._f(18), width=12)
@@ -446,7 +502,7 @@ class VentanaOpciones:
         w, (tipo, _r, _c, extra, fmt) = par
         v = leer(self.datos, ruta)
         if tipo == "vel":
-            texto = f"{velocidad_de_sens(v)} de 10"
+            texto = t("op_velocidad_valor", n=velocidad_de_sens(v))
         elif tipo == "bool":
             texto = t("op_si") if v else t("op_no")
             if isinstance(w, BotonGrande):
@@ -462,17 +518,24 @@ class VentanaOpciones:
         tipo, ruta, _clave, extra, _fmt = ctl
         if tipo == "vel":
             n = velocidad_de_sens(leer(self.datos, "puntero.sens_x")) + signo
-            sx, sy = sens_de_velocidad(n)
-            escribir(self.datos, "puntero.sens_x", sx)
-            escribir(self.datos, "puntero.sens_y", sy)
+            self._poner_velocidad(n)
         elif tipo == "num":
             escribir(self.datos, ruta, paso_numero(self.datos, ruta, extra, signo))
+            if ruta == "puntero.ajuste_vertical":
+                # la vertical se recalcula con la velocidad de ahora (la calibración no cambia)
+                self._poner_velocidad(velocidad_de_sens(leer(self.datos, "puntero.sens_x")))
         elif tipo == "bool":
             escribir(self.datos, ruta, not bool(leer(self.datos, ruta)))
         elif tipo == "opc":
             escribir(self.datos, ruta, ciclar(extra, leer(self.datos, ruta), signo))
         self._vista_previa()
         self._pintar_valor(ruta)
+
+    def _poner_velocidad(self, n: int):
+        """La velocidad escribe los tres valores juntos: sens_x, sens_y y joystick_g."""
+        p = self.datos["puntero"]
+        sx, sy, jg = sens_de_velocidad(n, p.get("ajuste_vertical", AJUSTE_VERTICAL_FABRICA))
+        p["sens_x"], p["sens_y"], p["joystick_g"] = sx, sy, jg
 
     def _texto_cambiado(self, ruta, var):
         valor = var.get()

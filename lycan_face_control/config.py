@@ -75,6 +75,13 @@ FABRICA: dict = {
     "ventana": {"x": None, "y": None, "mini": False},
     "perfiles": {PERFIL_PRINCIPAL: {"calibracion": None}},
 }
+# ---- 1.1 paquete A: velocidad, minimizar y extras de TD Control ----
+# Velocidad arriba y abajo aparte (sens_y = sens_x × ajuste; antes fijo en 1,2), los botones
+# «Sin clic» y «Lupa» de la barra, y la lupa para el clic preciso.
+FABRICA["puntero"]["ajuste_vertical"] = 1.2
+FABRICA["barra"]["boton_sin_clic"] = True
+FABRICA["barra"]["boton_lupa"] = True
+FABRICA["lupa"] = {"zona_px": 200, "aumento": 3, "espera_s": 8.0}
 
 # Rangos válidos (ruta con puntos -> (mínimo, máximo)). "*" vale por cualquier gesto.
 # Fuera de rango = valor de fábrica (y se anota en el registro).
@@ -98,6 +105,9 @@ RANGOS = {
     "seguridad.soltar_sin_cara_ms": (150, 1000), "seguridad.pausa_sin_cara_s": (3, 60),
     "seguridad.arrastre_max_s": (10, 300),
     "comodidad.escala_letra": (1.0, 2.0), "comodidad.descanso_min": (0, 120),
+    # ---- 1.1 paquete A: velocidad, minimizar y extras de TD Control ----
+    "puntero.ajuste_vertical": (0.8, 2.0),
+    "lupa.zona_px": (120, 400), "lupa.aumento": (2, 5), "lupa.espera_s": (4.0, 20.0),
 }
 # 0 = apagado; si no es 0, hay un mínimo (un aviso de descanso cada minuto no sirve)
 MINIMO_SI_NO_CERO = {"comodidad.descanso_min": 10}

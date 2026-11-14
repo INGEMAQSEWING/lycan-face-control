@@ -153,9 +153,11 @@ def area_libre(app, ventana) -> tuple[int, int, int, int]:
         if win is not None and win.winfo_exists() and win.winfo_viewable():
             pos = app.cfg.datos["barra"].get("posicion", "derecha")
             w, h = win.winfo_width(), win.winfo_height()
-            if pos in ("derecha", "izquierda"):
-                # se deja el mismo margen a ambos lados para que la ventana quede centrada
+            # 1.1: solo se quita el lado de la barra (con dos columnas la barra es más ancha y quitar
+            # su ancho de los dos lados dejaba las Opciones demasiado angostas en 1366 × 768)
+            if pos == "derecha":
                 d -= w + 16
+            elif pos == "izquierda":
                 l += w + 16
             elif pos == "arriba":
                 a += h + 16

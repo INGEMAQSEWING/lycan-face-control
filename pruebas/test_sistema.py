@@ -169,8 +169,9 @@ def test_constantes_de_la_cara():
     assert len(set(K.OVALO_CARA)) == len(K.OVALO_CARA)
     assert set(K.COLORES_ESTADO) == set(K.ESTADOS)
     assert K.LYCAN_EXTRA != 0x4C59434E       # distinta de la de Lycan Mouse Control
+    # 1.1 paquete A: + Sin clic, Lupa y Minimizar al final
     assert [b for b, _ in K.BOTONES_BARRA] == ["clic", "doble", "derecho", "arrastrar", "desplazar",
-                                               "teclado", "pausa"]
+                                               "teclado", "pausa", "sin_clic", "lupa", "minimizar"]
 
 
 def test_version_y_argumentos():
