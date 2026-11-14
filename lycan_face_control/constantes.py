@@ -13,6 +13,13 @@ NARIZ = 1
 OJO_DER_EXT, OJO_DER_INT = 33, 133       # comisuras del ojo derecho de la persona
 OJO_IZQ_INT, OJO_IZQ_EXT = 362, 263      # comisuras del ojo izquierdo de la persona
 IRIS_DER, IRIS_IZQ = 468, 473
+# ---- 1.1 paquete C: mover con los ojos ----
+# Anillo del iris (4 puntos alrededor del centro 468/473) y párpado medio (superior, inferior).
+# NO van en PUNTOS_CLAVE: una cara de 468 puntos (sin iris) sigue siendo válida.
+IRIS_DER_ANILLO = (469, 470, 471, 472)
+IRIS_IZQ_ANILLO = (474, 475, 476, 477)
+PARPADO_MEDIO_DER = (159, 145)
+PARPADO_MEDIO_IZQ = (386, 374)
 
 COMISURA_DER, COMISURA_IZQ = 61, 291     # comisuras externas de la boca
 BOCA_INT_DER, BOCA_INT_IZQ = 78, 308     # comisuras internas

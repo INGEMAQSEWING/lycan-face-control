@@ -26,8 +26,13 @@ from dataclasses import dataclass
 import numpy as np
 
 from .constantes import (BOCA_INT_DER, BOCA_INT_IZQ, CEJA_DER, CEJA_IZQ, COMISURA_DER, COMISURA_IZQ, EAR_DER,
-                         EAR_IZQ, IO_MIN_PX, LABIO_INF, LABIO_SUP, N_PUNTOS_MIN, NARIZ, OJO_DER_EXT, OJO_DER_INT,
-                         OJO_IZQ_EXT, OJO_IZQ_INT, PUNTOS_CLAVE)
+                         EAR_IZQ, IO_MIN_PX, IRIS_DER, IRIS_DER_ANILLO, IRIS_IZQ, IRIS_IZQ_ANILLO, LABIO_INF,
+                         LABIO_SUP, N_PUNTOS, N_PUNTOS_MIN, NARIZ, OJO_DER_EXT, OJO_DER_INT, OJO_IZQ_EXT,
+                         OJO_IZQ_INT, PUNTOS_CLAVE)
+
+# 1.1 paquete C: un ojo mucho más cerrado que el otro (EAR < 60 % del otro) no cuenta para la
+# mirada: FaceMesh baja el iris al cerrar el ojo y ese ojo daría una mirada falsa.
+OJO_CERRADO_FRACCION = 0.6
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,11 @@ class Medidas:
     cejas: float      # altura de las cejas
     sonrisa: float    # ancho de la boca
     centro: tuple | None = None   # punto medio de los ojos en la imagen (px): para notar otra cara
+    # ---- 1.1 paquete C: mirada (None si no hay iris: 468 puntos, NaN o los dos ojos cerrados) ----
+    iris_x: float | None = None   # posición del iris dentro del ojo, a lo ancho (crece hacia +x)
+    iris_y: float | None = None   # ...y a lo alto (crece hacia abajo)
+    iris_der: tuple | None = None  # (x, y) del ojo derecho solo (None si no cuenta: cerrado o sin iris)
+    iris_izq: tuple | None = None  # (x, y) del ojo izquierdo solo
 
     def como_dict(self) -> dict:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -91,10 +101,63 @@ def medir(puntos) -> Medidas:
     cejas = (_ceja_lado(P, CEJA_DER, OJO_DER_EXT, OJO_DER_INT)
              + _ceja_lado(P, CEJA_IZQ, OJO_IZQ_INT, OJO_IZQ_EXT)) / 2.0 / io
     sonrisa = _d(P, COMISURA_DER, COMISURA_IZQ) / io
+    ear_d, ear_i = ear(P, EAR_DER), ear(P, EAR_IZQ)
+    try:
+        ix, iy, i_der, i_izq = medir_iris(P, ex, ey, ear_d, ear_i)
+    except (IndexError, ValueError, FloatingPointError):
+        ix = iy = i_der = i_izq = None
     return Medidas(io_px=io, yaw_n=yaw_n, pitch_n=pitch_n, roll=roll,
-                   ear_der=ear(P, EAR_DER), ear_izq=ear(P, EAR_IZQ),
+                   ear_der=ear_d, ear_izq=ear_i,
                    mar=mar, cejas=cejas, sonrisa=sonrisa,
-                   centro=(float(ojos[0]), float(ojos[1])))
+                   centro=(float(ojos[0]), float(ojos[1])),
+                   iris_x=ix, iris_y=iy, iris_der=i_der, iris_izq=i_izq)
+
+
+def _iris_ojo(P, centro_iris: int, anillo, a: int, b: int, ex, ey):
+    """Iris de un ojo en el marco del ojo: (x, y) = (iris − centro de las comisuras)·(ex, ey) /
+    ancho del ojo. ``ex`` es el eje global 33→263 (el mismo para los dos ojos), así la inclinación
+    de lado no cambia la medida, y dividir por el ancho la hace igual de cerca o de lejos."""
+    idx = (centro_iris,) + tuple(anillo)
+    iris = P[list(idx), :2].mean(axis=0)
+    c = (P[a, :2] + P[b, :2]) / 2.0
+    ancho = float(np.linalg.norm(P[a, :2] - P[b, :2]))
+    if not (ancho > 1e-9) or not np.all(np.isfinite(iris)) or not np.all(np.isfinite(c)):
+        return None
+    d = iris - c
+    x, y = float(d @ ex) / ancho, float(d @ ey) / ancho
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return None
+    return (x, y)
+
+
+def medir_iris(P, ex, ey, ear_d: float, ear_i: float):
+    """(iris_x, iris_y, iris_der, iris_izq) o Nones. Promedio de los dos ojos ponderado por su
+    apertura (EAR); el ojo mucho más cerrado que el otro no cuenta."""
+    nada = (None, None, None, None)
+    if P.shape[0] < N_PUNTOS:
+        return nada
+    der = _iris_ojo(P, IRIS_DER, IRIS_DER_ANILLO, OJO_DER_EXT, OJO_DER_INT, ex, ey)
+    izq = _iris_ojo(P, IRIS_IZQ, IRIS_IZQ_ANILLO, OJO_IZQ_INT, OJO_IZQ_EXT, ex, ey)
+    wd = ear_d if math.isfinite(ear_d) and ear_d > 0 else 0.0
+    wi = ear_i if math.isfinite(ear_i) and ear_i > 0 else 0.0
+    if der is not None and izq is not None and wd > 0 and wi > 0:
+        if wd < OJO_CERRADO_FRACCION * wi:
+            der = None
+        elif wi < OJO_CERRADO_FRACCION * wd:
+            izq = None
+    if der is not None and wd <= 0:
+        der = None
+    if izq is not None and wi <= 0:
+        izq = None
+    if der is None and izq is None:
+        return nada
+    if der is not None and izq is not None:
+        s = wd + wi
+        x = (der[0] * wd + izq[0] * wi) / s
+        y = (der[1] * wd + izq[1] * wi) / s
+    else:
+        x, y = der if der is not None else izq
+    return (x, y, der, izq)
 
 
 def puntos_validos(puntos, ancho: float | None = None, alto: float | None = None,
@@ -110,7 +173,8 @@ def puntos_validos(puntos, ancho: float | None = None, alto: float | None = None
         return False
     if P.ndim != 2 or P.shape[0] < N_PUNTOS_MIN or P.shape[1] < 2:
         return False
-    if not np.all(np.isfinite(P)):
+    # 1.1 paquete C: el iris (puntos 468-477) no se exige: si viene dañado solo falta la mirada
+    if not np.all(np.isfinite(P[:N_PUNTOS_MIN])):
         return False
     if P.shape[1] == 2:
         P = np.hstack([P, np.zeros((P.shape[0], 1))])

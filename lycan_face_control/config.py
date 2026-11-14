@@ -88,6 +88,13 @@ FABRICA["lupa"] = {"zona_px": 200, "aumento": 3, "espera_s": 8.0}
 FABRICA["emergencia"] = {"activa": True, "mensaje": "Necesito ayuda", "volumen": 100, "repetir_voz": True,
                          "repetir_s": 12, "permanencia_s": 2.5, "detener_s": 3.0}
 FABRICA["atajos"]["emergencia"] = "Ctrl+Alt+A"
+# ---- 1.1 paquete C: mover con los ojos ----
+# «La cabeza» (de fábrica, igual que la 1.0), «Los ojos» u «Ojos y cabeza» (los ojos llevan el
+# puntero cerca y la cabeza lo deja justo encima). La lupa de los ojos usa lupa.aumento y
+# lupa.zona_px del paquete A (sin claves repetidas).
+FABRICA["puntero"]["fuente"] = "cabeza"
+FABRICA["ojos"] = {"suavidad": 3, "puntos_cal": 9, "fijacion_ms": 250, "salto_px": 200, "ganancia_fina": 0.4,
+                   "permanencia_s": 1.3, "franja": 0.35, "iman": True, "iman_px": 80, "lupa": True}
 
 # Rangos válidos (ruta con puntos -> (mínimo, máximo)). "*" vale por cualquier gesto.
 # Fuera de rango = valor de fábrica (y se anota en el registro).
@@ -117,6 +124,10 @@ RANGOS = {
     # ---- 1.1 paquete B: emergencia ----
     "emergencia.volumen": (10, 100), "emergencia.repetir_s": (5, 60),
     "emergencia.permanencia_s": (1.5, 5.0), "emergencia.detener_s": (2.0, 5.0),
+    # ---- 1.1 paquete C: mover con los ojos ----
+    "ojos.suavidad": (1, 5), "ojos.puntos_cal": (5, 9), "ojos.fijacion_ms": (100, 800),
+    "ojos.salto_px": (80, 600), "ojos.ganancia_fina": (0.2, 1.0), "ojos.permanencia_s": (0.6, 3.0),
+    "ojos.franja": (0.12, 0.6), "ojos.iman_px": (0, 200),
 }
 # 0 = apagado; si no es 0, hay un mínimo (un aviso de descanso cada minuto no sirve)
 MINIMO_SI_NO_CERO = {"comodidad.descanso_min": 10}
@@ -133,6 +144,10 @@ OPCIONES = {
     "gestos.*.largo": ACCIONES_GESTO,
     "gestos.parpadeo.fuera_barrido": ACCIONES_GESTO,
 }
+# ---- 1.1 paquete C: con qué se mueve el puntero ----
+FUENTES = ("cabeza", "ojos", "cabeza_y_ojos")
+OPCIONES["puntero.fuente"] = FUENTES
+PUNTOS_CAL_OJOS = (5, 9)
 # Textos con largo máximo (el nombre del cuidador se dice en voz alta en las frases)
 LARGO_TEXTO = {"teclado.cuidador": 40}
 # ---- 1.1 paquete B: lo que dice la voz al pedir ayuda ----
@@ -354,6 +369,11 @@ def _coherencia(out: dict, problemas: list):
     if p.get("fuera_barrido") == "emergencia":
         problemas.append("gestos.parpadeo.fuera_barrido: el parpadeo no puede pedir ayuda")
         p["fuera_barrido"] = "ninguna"
+    # 1.1 paquete C: la calibración de los ojos usa 5 o 9 puntos (otro número no tiene modelo)
+    o = out.get("ojos")
+    if isinstance(o, dict) and o.get("puntos_cal") not in PUNTOS_CAL_OJOS:
+        problemas.append(f"ojos.puntos_cal: {o.get('puntos_cal')} no es 5 ni 9; se usó 9")
+        o["puntos_cal"] = 9
     # siempre hay forma de reanudar sin manos
     if not formas_de_reanudar(out):
         problemas.append("sin forma de reanudar: se volvió a encender la permanencia")

@@ -13,6 +13,10 @@ que muestra qué hacer, la silueta en vivo y una barra de avance.
 - Con el barrido o «Solo comunicación» (quien solo parpadea): el paso «Parpadeo largo» muestra la
   barra del cierre (verde = ya puede abrir los ojos) y cuántos se reconocieron; la prueba final no
   son círculos para la cabeza sino el resultado de ese paso, y la ventana se cierra sola.
+- 1.1 paquete C: en la presentación, «Mover el puntero con» (La cabeza / Los ojos / Ojos y
+  cabeza). Con los ojos se agregan los pasos de la mirada, que se muestran a pantalla completa
+  (``calibracion_mirada.VentanaMirada``); al final se dice en palabras cuánto se equivocan los ojos.
+  La fuente elegida se guarda solo al terminar (con «Cancelar» no cambia nada).
 """
 from __future__ import annotations
 
@@ -21,8 +25,9 @@ import logging
 import queue
 import tkinter as tk
 
-from ..calibracion_guiada import PARPADEOS_LARGOS, Guia
-from ..config import PARPADEO_LARGO_PISO_MS, validar
+from ..calibracion_guiada import PARPADEOS_LARGOS, PASOS_MIRADA, Guia
+from ..config import FUENTES, PARPADEO_LARGO_PISO_MS, validar
+from ..mapeo import MONITOR_REFERENCIA
 from .comun import BotonGrande, area_libre, boton_ayuda, dibujar_cara, dibujar_puntos, letra, no_activar, tema
 from .textos import t
 
@@ -32,7 +37,10 @@ REFRESCO_MS = 50
 DIBUJO = {"posicion": ("reposo", None), "centro": ("reposo", None), "izq": ("mirar", "izq"),
           "der": ("mirar", "der"), "arr": ("mirar", "arr"), "aba": ("mirar", "aba"), "reposo": ("reposo", None),
           "parpadeo": ("ojos", None), "parpadeo_largo": ("ojos", None), "gesto_boca": ("boca", None), "gesto_cejas": ("cejas", None),
-          "gesto_sonrisa": ("sonrisa", None)}
+          "gesto_sonrisa": ("sonrisa", None),
+          # 1.1 paquete C
+          "mirada_centro": ("reposo", None), "mirada_puntos": ("reposo", None),
+          "mirada_cabeza": ("reposo", None), "mirada_validar": ("reposo", None)}
 N_OBJETIVOS = 4
 CIERRE_SOLO_MS = 12000          # con barrido: la prueba final se cierra sola (la persona no tiene manos)
 
@@ -48,6 +56,12 @@ class VentanaCalibracion:
         self.pocos: list = []
         self._ult_t = None
         self._ult_medidas = None
+        # 1.1 paquete C: con qué se moverá el puntero (se guarda solo al terminar)
+        self.fuente = (app.cfg.datos.get("puntero") or {}).get("fuente", "cabeza")
+        if self.fuente not in FUENTES:
+            self.fuente = "cabeza"
+        self.ventana_mirada = None
+        self.texto_mirada = None
         T = self.tema = tema(app.cfg.datos)
         w = self.win = tk.Toplevel(root)
         w.title(t("cal_titulo"))
@@ -97,6 +111,16 @@ class VentanaCalibracion:
                  wraplength=self.W - 80, justify="center").pack(pady=10)
         fila = tk.Frame(self.cuerpo, bg=T.fondo)
         fila.pack(side="bottom", fill="x", pady=8)
+        # 1.1 paquete C: «Mover el puntero con  ◀ La cabeza ▶»
+        sel = tk.Frame(self.cuerpo, bg=T.fondo)
+        sel.pack(side="bottom", pady=4)
+        tk.Label(sel, text=t("cal_fuente"), bg=T.fondo, fg=T.texto, font=letra(self.cfg, 18)).pack(side="left",
+                                                                                                padx=8)
+        self._boton(sel, "◀", "cal:fuente:menos", lambda e=None: self.cambiar_fuente(-1), side="left", padx=4)
+        self.lbl_fuente = tk.Label(sel, text=t(f"op_fuente_{self.fuente}"), bg=T.fondo, fg=T.acento,
+                                   font=letra(self.cfg, 18, True))
+        self.lbl_fuente.pack(side="left", padx=8)
+        self._boton(sel, "▶", "cal:fuente:mas", lambda e=None: self.cambiar_fuente(+1), side="left", padx=4)
         self._boton(fila, "cal_empezar", "cal:empezar", self.empezar, color=T.verde, side="left", expand=True,
                     fill="x", padx=8)
         self._boton(fila, "btn_cancelar", "cal:cancelar", self.cancelar, side="left", expand=True, fill="x", padx=8)
@@ -148,6 +172,12 @@ class VentanaCalibracion:
         self.lbl_final = tk.Label(self.cuerpo, text=t("cal_final"), bg=T.fondo, fg=T.texto,
                                   font=letra(self.cfg, 20, True), wraplength=self.W - 300, justify="center")
         self.lbl_final.pack(pady=4)
+        if self.texto_mirada:
+            # 1.1 paquete C: cuánto se equivocan los ojos, en palabras
+            texto, aviso = self.texto_mirada
+            tk.Label(self.cuerpo, text=texto, bg=T.aviso_fondo if aviso else T.fondo,
+                     fg=T.aviso_texto if aviso else T.verde, font=letra(self.cfg, 16, True),
+                     wraplength=self.W - 300, justify="center", padx=8, pady=4).pack(pady=4)
         if self.pocos:
             lados = ", ".join(t(f"lado_{p}") for p in self.pocos)
             tk.Label(self.cuerpo, text=t("cal_poco_movimiento", lados=lados), bg=T.aviso_fondo, fg=T.aviso_texto,
@@ -190,6 +220,44 @@ class VentanaCalibracion:
         fila.place(relx=0.5, rely=1.0, anchor="s")
         self._boton(fila, "btn_terminar", "cal:terminar", self.terminar, color=T.verde, side="left", padx=8)
         self._boton(fila, "cal_repetir_todo", "cal:repetir", self.repetir_todo, side="left", padx=8)
+
+    # ------------------------------------------------------------ 1.1 paquete C: ojos
+    def cambiar_fuente(self, signo: int):
+        if self.fase != "intro":
+            return
+        i = FUENTES.index(self.fuente) if self.fuente in FUENTES else 0
+        self.fuente = FUENTES[(i + signo) % len(FUENTES)]
+        try:
+            self.lbl_fuente.configure(text=t(f"op_fuente_{self.fuente}"))
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _cfg_guia(self) -> dict:
+        datos = copy.deepcopy(self.cfg)
+        datos.setdefault("puntero", {})["fuente"] = self.fuente
+        return datos
+
+    def _monitor(self):
+        try:
+            return self.app.motor.maquina.mapeo.monitor
+        except AttributeError:
+            return MONITOR_REFERENCIA
+
+    def _pintar_mirada(self, est):
+        """Los pasos de la mirada van en la ventana a pantalla completa; los demás, aquí."""
+        if est.paso in PASOS_MIRADA and est.fase != "terminado":
+            if self.ventana_mirada is None:
+                from .calibracion_mirada import VentanaMirada
+                self.ventana_mirada = VentanaMirada(self.root, self.app, self._monitor(), self.repetir_paso,
+                                                    self.atras, self.cancelar)
+            self.ventana_mirada.actualizar(est)
+        else:
+            self._cerrar_mirada()
+
+    def _cerrar_mirada(self):
+        v, self.ventana_mirada = self.ventana_mirada, None
+        if v is not None:
+            v.cerrar()
 
     # ------------------------------------------------------------ acciones
     def empezar(self):
@@ -262,6 +330,7 @@ class VentanaCalibracion:
         self._cerrar(ok=False)
 
     def _cerrar(self, ok: bool):
+        self._cerrar_mirada()
         try:
             self.win.after_cancel(self._loop)
         except (tk.TclError, ValueError):
@@ -296,7 +365,7 @@ class VentanaCalibracion:
         self._ult_t = t_
         self._ult_medidas = medidas
         if self.guia is None:
-            self.guia = Guia(self.cfg, t_)
+            self.guia = Guia(self._cfg_guia(), t_, monitor=self._monitor())
         return self.guia.alimentar(t_, medidas, io_fr)
 
     def _refrescar(self):
@@ -319,6 +388,7 @@ class VentanaCalibracion:
                     est = self.guia.estado(self._ult_t)
                 if est is not None:
                     self._pintar(est)
+                    self._pintar_mirada(est)
                     if self.guia.terminado:
                         self._finalizar_pasos()
             self._loop = self.win.after(REFRESCO_MS, self._refrescar)
@@ -397,6 +467,7 @@ class VentanaCalibracion:
             self._pantalla_pasos()
             return
         cal, largo_ms, pocos = res
+        self._cerrar_mirada()
         self.pocos = pocos
         self.no_detectados = list(getattr(self.guia, "gestos_no_detectados", []) or [])
         self.parpadeos_largos = getattr(self.guia, "parpadeos_largos", None)
@@ -405,6 +476,22 @@ class VentanaCalibracion:
         datos.setdefault("perfiles", {}).setdefault(perfil, {})["calibracion"] = cal
         datos["gestos"]["parpadeo"]["largo_ms"] = max(int(largo_ms), PARPADEO_LARGO_PISO_MS)
         datos["primera_vez"] = False
+        # 1.1 paquete C: la fuente elegida; si los ojos no se pudieron calibrar, queda la cabeza
+        self.texto_mirada = None
+        fuente = self.fuente
+        if fuente != "cabeza" and not datos.get("teclado", {}).get("solo_comunicacion"):
+            info = getattr(self.guia, "mirada_info", None)
+            if "mirada" not in cal:
+                fuente = "cabeza"
+                self.texto_mirada = (t("cal_mirada_fallo"), True)
+            elif info and info.get("cm") is not None:
+                if info.get("impreciso"):
+                    self.texto_mirada = (t("cal_mirada_impreciso", cm=info["cm"]), True)
+                else:
+                    self.texto_mirada = (t("cal_mirada_resultado", cm=info["cm"], boton=info["boton"]), False)
+        elif fuente != "cabeza":
+            fuente = "cabeza"            # «Solo comunicación» no usa el puntero
+        datos.setdefault("puntero", {})["fuente"] = fuente
         datos = validar(datos)
         self.app.cfg.datos = datos
         self.app.guardar_config()

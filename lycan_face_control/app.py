@@ -119,6 +119,11 @@ def check(verbose: bool = True) -> int:
         decir(f"Cara de prueba: {len(cara.puntos)} puntos, ojos {m.ear_der:.2f}/{m.ear_izq:.2f}, "
               f"boca {m.mar:.3f}")
 
+        # 1.1 paquete C: para mover con los ojos hacen falta los puntos del iris
+        if m.iris_x is None or m.iris_y is None:
+            raise RuntimeError("la cara de prueba no trae los puntos del iris (mover con los ojos no funcionaría)")
+        decir(f"Ojos: iris medido ({m.iris_x:+.3f}, {m.iris_y:+.3f})")
+
         decir(f"Voz: {_comprobar_voz()}")
         # 1.1 paquete B: el sonido de la alarma de AYUDA se arma en memoria (aquí no suena)
         from .sistema.alarma import generar_wav

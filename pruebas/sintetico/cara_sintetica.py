@@ -8,7 +8,12 @@ cara dibujada de herramientas/cara_dibujada.py) y la deforma:
 - cejas (0..1): sube las cejas;
 - sonrisa (0..1): separa y sube las comisuras de la boca;
 - cabeza: giro 3D (yaw, pitch, roll en grados) alrededor del centro de la cara;
-- escala, posición y ruido gaussiano en píxeles.
+- escala, posición y ruido gaussiano en píxeles;
+- 1.1 paquete C, mirada: ``ojo_yaw``/``ojo_pitch`` (grados) mueven el iris dentro del ojo
+  R·sin(ángulo), con R = 0,40 × el ancho del ojo, y el anillo se encoge por cos(ángulo);
+  ``ruido_iris`` (px) mueve solo los puntos del iris; ``iris_baja`` (0..1) baja el iris al
+  cerrar el ojo (como FaceMesh) y ``parpado_sigue`` (0..1) sube o baja el párpado superior con la
+  mirada. ``mirar_a`` da los parámetros para mirar un punto de la pantalla.
 
 Convenciones de signo (iguales a ``lycan_face_control.cara``):
 - ``yaw > 0``: la nariz va hacia +x de la imagen (con la imagen en espejo, la persona gira a su
@@ -109,9 +114,37 @@ def _rotar(L, yaw: float, pitch: float, roll: float):
     return np.stack([x, y, z], axis=1)
 
 
+# ---- 1.1 paquete C: iris ----
+IRIS_DER_PUNTOS = (468, 469, 470, 471, 472)      # centro y anillo
+IRIS_IZQ_PUNTOS = (473, 474, 475, 476, 477)
+RADIO_GIRO_OJO = 0.40                            # R = 0,40 × el ancho del ojo
+DISTANCIA_CM = 60.0
+ANCHO_PANTALLA_CM = 34.5                         # pantalla supuesta de 15,6 pulgadas
+
+
+def _mover_iris(P, base, puntos, comisuras, ojo_yaw, ojo_pitch, apertura, iris_baja, parpado_sigue, sup):
+    a, b = comisuras
+    ancho = float(np.linalg.norm(base[a, :2] - base[b, :2]))
+    r = RADIO_GIRO_OJO * ancho
+    cy = math.radians(ojo_yaw)
+    cp = math.radians(ojo_pitch)
+    dx = r * math.sin(cy)
+    dy = r * math.sin(cp)
+    if iris_baja:
+        dy += float(iris_baja) * (1.0 - min(max(float(apertura), 0.0), 1.0)) * ancho
+    c = base[puntos[0]]
+    for i in puntos:
+        P[i, 0] = c[0] + (base[i, 0] - c[0]) * math.cos(cy) + dx
+        P[i, 1] = c[1] + (base[i, 1] - c[1]) * math.cos(cp) + dy
+    if parpado_sigue:
+        P[list(sup), 1] += float(parpado_sigue) * r * math.sin(cp)
+
+
 def cara(yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, ojo_der: float = 1.0, ojo_izq: float = 1.0,
          boca: float = 0.0, cejas: float = 0.0, sonrisa: float = 0.0, escala: float = 1.0,
-         centro=(320.0, 240.0), ruido: float = 0.0, rng=None, ojos: float | None = None) -> np.ndarray:
+         centro=(320.0, 240.0), ruido: float = 0.0, rng=None, ojos: float | None = None,
+         ojo_yaw: float = 0.0, ojo_pitch: float = 0.0, ruido_iris: float = 0.0, iris_baja: float = 0.0,
+         parpado_sigue: float = 0.0) -> np.ndarray:
     """Una cara sintética: (478, 3) en píxeles. ``ojos`` (si se da) fija ambos ojos a la vez."""
     if ojos is not None:
         ojo_der = ojo_izq = ojos
@@ -121,6 +154,11 @@ def cara(yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, ojo_der: float
     # ---- expresión (en la cara de frente, antes de girar) ----
     _cerrar_ojo(P, base, PARPADO_SUP_DER, PARPADO_INF_DER, COMISURAS_OJO_DER, ojo_der)
     _cerrar_ojo(P, base, PARPADO_SUP_IZQ, PARPADO_INF_IZQ, COMISURAS_OJO_IZQ, ojo_izq)
+    if ojo_yaw or ojo_pitch or iris_baja:
+        _mover_iris(P, base, IRIS_DER_PUNTOS, COMISURAS_OJO_DER, ojo_yaw, ojo_pitch, ojo_der, iris_baja,
+                    parpado_sigue, PARPADO_SUP_DER)
+        _mover_iris(P, base, IRIS_IZQ_PUNTOS, COMISURAS_OJO_IZQ, ojo_yaw, ojo_pitch, ojo_izq, iris_baja,
+                    parpado_sigue, PARPADO_SUP_IZQ)
     if boca:
         dy = max(float(boca), 0.0) * BOCA_BAJA * io
         P[list(LABIO_INFERIOR), 1] += dy
@@ -148,7 +186,27 @@ def cara(yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, ojo_der: float
     if ruido:
         rng = rng if rng is not None else np.random.default_rng()
         out = out + rng.normal(0.0, float(ruido), size=out.shape)
+    if ruido_iris:
+        rng = rng if rng is not None else np.random.default_rng()
+        idx = list(IRIS_DER_PUNTOS + IRIS_IZQ_PUNTOS)
+        out[idx, :2] = out[idx, :2] + rng.normal(0.0, float(ruido_iris), size=(len(idx), 2))
     return out
+
+
+def mirar_a(px: float, py: float, cabeza_yaw: float = 0.0, cabeza_pitch: float = 0.0, monitor=None,
+            distancia_cm: float = DISTANCIA_CM, px_por_cm: float | None = None) -> dict:
+    """Parámetros de ``cara()`` para mirar el punto (px, py) de la pantalla con la cabeza girada
+    ``cabeza_yaw``/``cabeza_pitch`` grados: los ojos giran lo que falta (ángulo al punto menos el
+    de la cabeza). La pantalla está a ``distancia_cm`` y tiene ``px_por_cm`` (de fábrica, una de
+    34,5 cm de ancho)."""
+    if monitor is None:
+        from lycan_face_control.mapeo import MONITOR_REFERENCIA as monitor
+    if px_por_cm is None:
+        px_por_cm = monitor.ancho / ANCHO_PANTALLA_CM
+    cx, cy = monitor.centro
+    ax = math.degrees(math.atan((px - cx) / px_por_cm / distancia_cm))
+    ay = math.degrees(math.atan((py - cy) / px_por_cm / distancia_cm))
+    return {"yaw": cabeza_yaw, "pitch": cabeza_pitch, "ojo_yaw": ax - cabeza_yaw, "ojo_pitch": ay - cabeza_pitch}
 
 
 def centro_base():
@@ -162,10 +220,12 @@ def normalizar(puntos, ancho: int = 640, alto: int = 480) -> np.ndarray:
     return np.asarray(puntos, dtype=float) / np.array([ancho, alto, ancho], dtype=float)
 
 
-_NUMERICOS = ("yaw", "pitch", "roll", "ojo_der", "ojo_izq", "boca", "cejas", "sonrisa", "escala", "ruido")
+_NUMERICOS = ("yaw", "pitch", "roll", "ojo_der", "ojo_izq", "boca", "cejas", "sonrisa", "escala", "ruido",
+              "ojo_yaw", "ojo_pitch", "ruido_iris")
 # valores de cara() cuando una clave no los nombra
 POR_DEFECTO = {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "ojo_der": 1.0, "ojo_izq": 1.0, "boca": 0.0,
-               "cejas": 0.0, "sonrisa": 0.0, "escala": 1.0, "ruido": 0.0, "centro": (320.0, 240.0)}
+               "cejas": 0.0, "sonrisa": 0.0, "escala": 1.0, "ruido": 0.0, "centro": (320.0, 240.0),
+               "ojo_yaw": 0.0, "ojo_pitch": 0.0, "ruido_iris": 0.0}
 
 
 def _completar(p: dict) -> dict:
@@ -219,7 +279,7 @@ def linea_de_tiempo(claves, fps: float = 30.0, rng=None):
             params = _interpolar(pa, pb, f)
         else:
             params = _completar(pa)
-        if params.get("ruido") and rng is not None:
+        if (params.get("ruido") or params.get("ruido_iris")) and rng is not None:
             params["rng"] = rng
         out.append((t, cara(**params)))
     return out

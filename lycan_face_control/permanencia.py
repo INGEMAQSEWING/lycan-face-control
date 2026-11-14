@@ -126,7 +126,7 @@ class Permanencia:
                    bool((cfg.get("teclado") or {}).get("repetir_teclas", False)))
 
     # ------------------------------------------------------------ control
-    def ajustar_radio_minimo(self, minimo_px: float, factor_armar: float = 1.5):
+    def ajustar_radio_minimo(self, minimo_px: float, factor_armar: float = 1.5, tope: float | None = None):
         """El radio no baja de ``minimo_px`` (lo fija el temblor esperado del puntero) y la
         distancia para armar no baja de ``factor_armar`` × ``minimo_px``: el temblor de la cámara
         ni dispara clics ni los impide. (La distancia para armar no se dobla con el radio: con una
@@ -137,6 +137,15 @@ class Permanencia:
             return
         if not math.isfinite(minimo_px):
             return
+        if tope is not None:
+            # 1.1 paquete C: con los ojos el temblor es grande; el círculo no pasa de ``tope`` (si
+            # no, ya no sería "quedarse quieto"), salvo que la configuración pida uno mayor
+            try:
+                tope = float(tope)
+            except (TypeError, ValueError):
+                tope = None
+            if tope is not None and math.isfinite(tope):
+                minimo_px = min(minimo_px, max(tope, 1.0))
         if minimo_px > self.radio:
             self.radio = minimo_px
         armar = max(self.distancia_activacion, factor_armar * minimo_px)

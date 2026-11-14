@@ -298,3 +298,41 @@ def calibracion_valida(cal) -> bool:
         return False
     return (all(_finito(b.get(k)) and b.get(k) > 0 for k in ("ear_der", "ear_izq", "cejas", "sonrisa"))
             and _finito(b.get("mar")) and b.get("mar") >= 0)
+
+
+# ---------------------------------------------------------------------------------------------
+# 1.1 paquete C: calibración de la mirada (``cal["mirada"]``), revisada APARTE: si falta o no
+# sirve, el puntero usa la cabeza con un aviso, y la calibración de la cabeza sigue valiendo.
+# ---------------------------------------------------------------------------------------------
+def rect_monitor(monitor) -> list | None:
+    try:
+        return [int(monitor.x), int(monitor.y), int(monitor.ancho), int(monitor.alto)]
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def tam_camara(camara) -> list | None:
+    try:
+        return [int(camara["ancho"]), int(camara["alto"])]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def modelo_mirada(cal_m, monitor=None, camara=None):
+    """El modelo de la mirada guardado, o None si falta, está dañado o se hizo con **otro monitor**
+    (u otra resolución) o con **otra resolución de la cámara**: en esos casos hay que calibrar los
+    ojos de nuevo (la posición del iris en la imagen cambia)."""
+    from .mirada import ModeloMirada
+    if not isinstance(cal_m, dict):
+        return None
+    if monitor is not None:
+        if cal_m.get("monitor") != rect_monitor(monitor):
+            return None
+    if camara is not None:
+        if cal_m.get("camara") != tam_camara(camara):
+            return None
+    return ModeloMirada.desde_dict(cal_m)
+
+
+def mirada_valida(cal_m, monitor=None, camara=None) -> bool:
+    return modelo_mirada(cal_m, monitor, camara) is not None

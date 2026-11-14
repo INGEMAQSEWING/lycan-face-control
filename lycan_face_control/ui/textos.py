@@ -669,6 +669,71 @@ TXT["ayuda_uso"] = TXT["ayuda_uso"] + (
     "momento sobre la pestaña.")
 
 
+# ---- 1.1 paquete C: mover con los ojos ----
+TXT.update({
+    "op_fuente": "Mover el puntero con",
+    "op_fuente_cabeza": "La cabeza",
+    "op_fuente_ojos": "Los ojos",
+    "op_fuente_cabeza_y_ojos": "Ojos y cabeza (recomendado)",
+    "op_fuente_ayuda": ("Con los ojos el puntero llega rápido, pero cae a unos 3 a 5 cm de donde mira. «Ojos y "
+                        "cabeza»: los ojos lo llevan cerca y un movimiento pequeño de la cabeza lo deja justo "
+                        "encima."),
+    "op_ojos_suavidad": "Suavidad con los ojos",
+    "op_ojos_permanencia": "Tiempo quieto para hacer clic con los ojos",
+    # «salte a donde mira» terminaba en « mira », que la regla del tuteo no deja pasar
+    "op_ojos_salto": "Distancia para que el puntero salte hacia su mirada",
+    "op_ojos_fina": "Velocidad del ajuste con la cabeza",
+    "op_ojos_iman": "Pegar el puntero a los botones grandes",
+    "op_ojos_lupa": "Abrir la lupa antes de cada clic con los ojos",
+    "op_ojos_puntos": "Puntos para calibrar los ojos",
+    "op_ojos_puntos_valor": "{n} puntos",
+    "op_ojos_camara": ("Con los ojos funciona mejor con la cámara en 1280 × 720 (usa más el procesador). "
+                       "¿Cambiarla?"),
+    "op_ojos_camara_si": "Sí, cambiar",
+    "op_ojos_camara_hecho": ("Al guardar, la cámara usará 1280 × 720 la próxima vez que abra el programa. "
+                             "Después calibre los ojos de nuevo."),
+    "cal_fuente": "Mover el puntero con",
+    "cal_mirada_centro_titulo": "Ojos: centro",
+    "cal_mirada_centro": "Mire el punto del centro sin mover la cabeza.",
+    "cal_mirada_puntos_titulo": "Ojos: puntos",
+    "cal_mirada_puntos": "Siga el punto solo con los ojos. Deje la cabeza quieta.",
+    "cal_mirada_cabeza_titulo": "Ojos fijos, cabeza en movimiento",
+    "cal_mirada_cabeza": ("Mire el punto del centro y, sin dejar de mirarlo, mueva la cabeza despacio a los lados "
+                          "y arriba y abajo."),
+    "cal_mirada_validar_titulo": "Ojos: comprobar",
+    "cal_mirada_validar": "Mire cada punto nuevo.",
+    "cal_mirada_repetir": "Mueva solo los ojos y deje la cabeza quieta. Repito este punto.",
+    "cal_mirada_sin_ojos": "No veo bien sus ojos. Abra los ojos, quite los reflejos de los lentes o mejore la luz de frente.",
+    "cal_mirada_resultado": ("Con los ojos, el puntero cae a unos {cm} cm de donde usted mira. Use botones de al "
+                             "menos {boton} cm o la lupa."),
+    "cal_mirada_impreciso": ("Con esta cámara los ojos quedaron poco precisos (unos {cm} cm). Le recomiendo «Ojos y "
+                             "cabeza» o «La cabeza»."),
+    "cal_mirada_fallo": ("No pude calibrar los ojos (casi no se movieron o no se vieron bien). El puntero se "
+                         "moverá con la cabeza."),
+    "aviso_ojos_sin_calibrar": ("Para mover el puntero con los ojos primero hay que calibrarlos. Mientras tanto uso "
+                                "la cabeza."),
+    "aviso_ojos_distancia": "Acérquese o aléjese hasta quedar como cuando calibró los ojos.",
+    "aviso_ojos_recentrar": "Mire el punto del centro un segundo…",
+    "ayuda_sec_ojos": "Con los ojos",
+    "ayuda_ojos": ("Con la cámara del computador, los ojos sirven para decir «quiero ir allá» más que para "
+                   "apuntar exacto. El puntero cae a unos 3 a 5 cm de donde mira, como el ancho de un dedo "
+                   "pulgar o un poco más. Sirve muy bien para el teclado de la pantalla, la barra de botones y "
+                   "para cruzar la pantalla rápido sin mover el cuello. Para cosas pequeñas, como la X de una "
+                   "ventana o un menú, use la lupa o «Ojos y cabeza». Funciona mejor con buena luz de frente, la "
+                   "cara a unos 50 a 60 cm, sin reflejos en los lentes. Con el tiempo se corre un poco: use "
+                   "«Recentrar» mirando el centro, y calibre de nuevo si cambia de silla, de cama o de pantalla. "
+                   "No es tan preciso como un aparato especial para los ojos. Mirar a propósito cansa: tome "
+                   "descansos.\n\n"
+                   "• Para elegirlo: Opciones › Puntero › «Mover el puntero con», o en la pantalla de inicio de la "
+                   "calibración. Después hay que calibrar: se agregan unos pasos con puntos en la pantalla que "
+                   "se siguen solo con los ojos.\n"
+                   "• Parpadear no mueve el puntero ni hace clic.\n"
+                   "• Con «Los ojos», quedarse mirando un punto hace aparecer la lupa; quédese mirando el punto exacto "
+                   "de la imagen grande para hacer el clic.\n"
+                   "• Cerca de un botón del programa el puntero se pega a su centro."),
+})
+
+
 def t(clave: str, **kw) -> str:
     txt = TXT.get(clave)
     if txt is None:

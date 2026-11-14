@@ -17,6 +17,8 @@ from .textos import atajos_kw, barra_uso, nombre_accion, pausa_uso, t
 SECCIONES = ("gestos", "uso", "cuidador", "problemas", "acerca")
 # 1.1 paquete B: página del botón AYUDA (emergencia), después de «Cómo se usa»
 SECCIONES = ("gestos", "uso", "emergencia", "cuidador", "problemas", "acerca")
+# 1.1 paquete C: página «Con los ojos» (el texto honesto sobre la precisión), después de «Cómo se usa»
+SECCIONES = ("gestos", "uso", "ojos", "emergencia", "cuidador", "problemas", "acerca")
 MAX_PT_PESTANA = 24          # 1.1: tope de la letra de las pestañas (con la letra al 200 %)
 MIN_PT_AYUDA = 11            # si un solo párrafo no cabe ni en una página, se achica hasta aquí
 

@@ -104,6 +104,14 @@ SUBMODOS_SIN_PUNTERO = (K.BARRIDO, K.SOLO_COMUNICACION)
 # ---- 1.1 paquete B: emergencia (botón AYUDA) ----
 IDS_EMERGENCIA = K.IDS_EMERGENCIA
 ID_ATENDIDO = K.ID_ATENDIDO
+# ---- 1.1 paquete C: mover con los ojos ----
+RADIO_MAX_OJOS = 120.0                # con los ojos el círculo de la permanencia no pasa de 120 px
+OJOS_AFUERA = 0.15                    # la mirada más de 15 % fuera del monitor = mira a otro lado
+OJOS_AFUERA_VUELVE = 0.08             # histéresis: para volver hay que entrar claramente
+IMAN_SUELTA = 1.2                     # el imán se suelta al alejarse un 20 % más de lo que pega
+DISTANCIA_CAMBIO = 0.20               # la cara cambió de tamaño más de 20 % desde la calibración
+DISTANCIA_VENTANA_S = 3.0
+DISTANCIA_AVISO_CADA_S = 60.0
 
 
 @dataclass
@@ -128,6 +136,8 @@ class Vista:
     reanuda_parpadeo: bool = False              # en pausa: dos parpadeos largos reanudan
     mirando_afuera: bool = False                # la cabeza está muy fuera de su rango cómodo
     emergencia: bool = False                    # 1.1: se pidió AYUDA (pantalla roja y alarma)
+    fuente: str = "cabeza"                      # 1.1 paquete C: con qué se mueve el puntero de verdad
+    iman: str | None = None                     # 1.1 paquete C: botón al que se pegó el puntero
 
 
 @dataclass
@@ -192,6 +202,15 @@ class Maquina:
         self.emergencia = False
         self._estado_antes_emergencia = None
         self._t_emergencia = None
+        # 1.1 paquete C: ojos
+        self._afuera_c = False                    # (ojos) la cabeza fuera de su rango
+        self._afuera_o = False                    # (ojos) la mirada fuera del monitor
+        self._iman = None                         # id del botón al que se pegó el puntero
+        self._pos_vista = None                    # posición pegada (imán) para la vista
+        self._pos_enviada = None                  # última posición enviada con Mover (ojos)
+        self._aviso_fuente_dado = None
+        self._io_hist: deque = deque()
+        self._t_aviso_distancia = None
 
     # ------------------------------------------------------------ armado
     def _construir(self, conservar_pos: bool = False):
@@ -207,14 +226,150 @@ class Maquina:
         self.mapeo = MapeoCabeza.desde_config(cfg, self.monitor, self.calibracion)
         self.puntero = Puntero.desde_config(cfg, self.mapeo, pos, self.calibracion)
         self.perm = Permanencia.desde_config(cfg, self.mapeo.monitor.alto)
+        if self.puntero.usa_ojos:
+            # 1.1 paquete C: con los ojos, la permanencia libre tiene su propio tiempo
+            self.perm.tiempo_s = float((cfg.get("ojos") or {}).get("permanencia_s", 1.3))
         # el círculo de la permanencia nunca es menor que el temblor esperado del puntero (con un
         # rango calibrado pequeño o mucha velocidad el temblor de FaceMesh se amplifica)
-        self.perm.ajustar_radio_minimo(RADIO_SIGMAS * self.puntero.temblor_px)
+        self.perm.ajustar_radio_minimo(RADIO_SIGMAS * self.puntero.temblor_px, tope=self._tope_radio())
+        self._iman = None
+        self._pos_vista = None
         self.gestos = Gestos(cfg["gestos"], self.calibracion)
         # el clasificador nuevo arranca "recién vuelta la cara": un gesto que ya esté arriba (las
         # cejas de la prueba final de la calibración, la boca al guardar Opciones) tiene que volver
         # a reposo antes de contar
         self.gestos.perder_cara()
+
+    # ------------------------------------------------------------ 1.1 paquete C: ojos
+    def _tope_radio(self):
+        return RADIO_MAX_OJOS if getattr(self, "puntero", None) is not None and self.puntero.usa_ojos else None
+
+    @property
+    def usa_ojos(self) -> bool:
+        return self.puntero.usa_ojos
+
+    @staticmethod
+    def _iris(m):
+        """(iris_x, iris_y) de las medidas, o None (sin iris: el puntero de los ojos no se mueve)."""
+        ix, iy = getattr(m, "iris_x", None), getattr(m, "iris_y", None)
+        if ix is None or iy is None:
+            return None
+        try:
+            ix, iy = float(ix), float(iy)
+        except (TypeError, ValueError):
+            return None
+        return (ix, iy) if math.isfinite(ix) and math.isfinite(iy) else None
+
+    def _franja(self) -> float:
+        """Franja de histéresis de los botones: con los ojos, más ancha (la mirada tiembla más)."""
+        if self.puntero.usa_ojos:
+            return float((self.cfg.get("ojos") or {}).get("franja", 0.35))
+        from .permanencia import FRANJA_OBJETIVO
+        return FRANJA_OBJETIVO
+
+    def _aviso_fuente(self, acc: list):
+        """Se pidió mover con los ojos pero no están calibrados (o la calibración es de otra pantalla
+        o de otra resolución de la cámara): se usa la cabeza y se avisa una vez."""
+        aviso = self.puntero.aviso_fuente
+        clave = (aviso, self.puntero.fuente_pedida) if aviso else None
+        if clave != self._aviso_fuente_dado:
+            self._aviso_fuente_dado = clave
+            if aviso:
+                acc.append(Aviso(aviso))
+                log.info("Mover con los ojos sin calibración de la mirada: se usa la cabeza")
+
+    def _aplicar_iman(self, pos, objetivos, t: float):
+        """Imán (solo con los ojos y solo en las ventanas propias): cerca de un botón elegible el
+        puntero se pega a su centro; se suelta al alejarse un 20 % más."""
+        o_cfg = self.cfg.get("ojos") or {}
+        if not self.puntero.usa_ojos or not o_cfg.get("iman", True):
+            self._iman = None
+            return pos
+        r = float(o_cfg.get("iman_px", 80))
+        x, y = pos
+
+        def distancia(o):
+            l, tp, d, b = o.rect
+            dx = max(l - x, 0.0, x - (d - 1))
+            dy = max(tp - y, 0.0, y - (b - 1))
+            return math.hypot(dx, dy)
+
+        def centro(o):
+            l, tp, d, b = o.rect
+            return (int(round((l + d - 1) / 2.0)), int(round((tp + b - 1) / 2.0)))
+
+        candidatos = [o for o in objetivos if o.elegible and o.id != lupa_mod.ID_ZONA]
+        if self._iman is not None:
+            o = next((c for c in candidatos if c.id == self._iman), None)
+            if o is not None and distancia(o) <= r * IMAN_SUELTA:
+                return centro(o)
+            self._iman = None
+        mejor, dmin = None, None
+        for o in candidatos:
+            d = distancia(o)
+            if d <= r and (dmin is None or d < dmin):
+                mejor, dmin = o, d
+        if mejor is None:
+            return pos
+        self._iman = mejor.id
+        return centro(mejor)
+
+    def _mirando_afuera_ojos(self, t: float, m) -> bool:
+        """Con los ojos: mira a otro lado si la cabeza sale de su rango (como siempre) o si la mirada
+        cae más de un 15 % fuera del monitor. Con histéresis."""
+        try:
+            u, v = self.mapeo.normalizar(float(m.yaw_n), float(m.pitch_n))
+            a = max(abs(u), abs(v))
+            if math.isfinite(a):
+                if self._afuera_c:
+                    self._afuera_c = not a < U_AFUERA_VUELVE
+                else:
+                    self._afuera_c = a > U_AFUERA
+        except (AttributeError, TypeError, ValueError):
+            pass
+        g = self.puntero.mirada
+        if g is not None:
+            mon = self.mapeo.monitor
+            W, H = max(mon.ancho, 1), max(mon.alto, 1)
+            exc = max((mon.x - g[0]) / W, (g[0] - (mon.x + W)) / W, (mon.y - g[1]) / H,
+                      (g[1] - (mon.y + H)) / H, 0.0)
+            if self._afuera_o:
+                self._afuera_o = not exc < OJOS_AFUERA_VUELVE
+            else:
+                self._afuera_o = exc > OJOS_AFUERA
+        nuevo = self._afuera_c or self._afuera_o
+        if self._afuera and not nuevo:
+            self._desarmar_tras_deslizar(t, MEZCLA_DESCONGELAR_S)
+            log.info("La mirada volvió a la pantalla")
+        elif nuevo and not self._afuera:
+            self.perm.reiniciar()
+            log.info("La mirada o la cabeza están fuera de la pantalla: puntero quieto y sin clics")
+        self._afuera = nuevo
+        return nuevo
+
+    def _revisar_distancia(self, t: float, m, acc: list):
+        """La cara está mucho más cerca o más lejos que al calibrar los ojos: se avisa (cada 60 s
+        como mucho), porque la mirada se corre."""
+        ref = ((self.calibracion or {}).get("mirada") or {}).get("io_fraccion")
+        ancho = (self.cfg.get("camara") or {}).get("ancho") or 0
+        try:
+            ref = float(ref)
+            io_fr = float(m.io_px) / float(ancho)
+        except (TypeError, ValueError, AttributeError, ZeroDivisionError):
+            return
+        if not (math.isfinite(ref) and ref > 0 and math.isfinite(io_fr)):
+            return
+        self._io_hist.append((t, io_fr))
+        while self._io_hist and self._io_hist[0][0] < t - DISTANCIA_VENTANA_S:
+            self._io_hist.popleft()
+        if len(self._io_hist) < 10 or self._io_hist[-1][0] - self._io_hist[0][0] < DISTANCIA_VENTANA_S * 0.8:
+            return
+        if self._t_aviso_distancia is not None and t - self._t_aviso_distancia < DISTANCIA_AVISO_CADA_S:
+            return
+        med = statistics.median(v for _, v in self._io_hist)
+        if abs(med - ref) / ref > DISTANCIA_CAMBIO:
+            self._t_aviso_distancia = t
+            acc.append(Aviso("ojos_distancia"))
 
     def _desarmar_tras_deslizar(self, t: float | None, extra_s: float = 0.0):
         """El puntero se va a deslizar solo (mezcla): la permanencia no se arma con eso."""
@@ -376,6 +531,10 @@ class Maquina:
     def recentrar(self, t: float) -> list:
         if self.estado in (K.ACTIVO, K.PAUSA, K.SIN_CARA):
             self._recentrar = {"t0": t, "yaw": [], "pitch": []}
+            if self.puntero.usa_ojos:
+                # 1.1 paquete C: con los ojos se pide mirar el punto del centro
+                self._recentrar["mirada"] = []
+                return [Aviso("recentrando"), Aviso("ojos_recentrar")]
             return [Aviso("recentrando")]
         return []
 
@@ -497,6 +656,7 @@ class Maquina:
     def procesar(self, t: float, medidas) -> Resultado:
         """Un cuadro: ``medidas`` (``cara.Medidas``) o None si no hay cara."""
         acc: list = []
+        self._aviso_fuente(acc)
         dt = 0.05 if self._t_ant is None else min(max(t - self._t_ant, 0.0), 0.5)
         self._t_ant = t
         self._ultimas_medidas = medidas
@@ -697,7 +857,15 @@ class Maquina:
             return
         r["yaw"].append(m.yaw_n)
         r["pitch"].append(m.pitch_n)
+        if "mirada" in r:
+            g = self.puntero.mirada_cruda()
+            if g is not None:
+                r["mirada"].append(g)
         if t - r["t0"] >= RECENTRAR_S - 1e-9 and len(r["yaw"]) >= 3:
+            if len(r.get("mirada") or []) >= 3:
+                # 1.1 paquete C: con los ojos se corrige solo el desplazamiento de la mirada
+                self.puntero.recentrar_mirada((statistics.median(g[0] for g in r["mirada"]),
+                                               statistics.median(g[1] for g in r["mirada"])), t)
             self.mapeo.recentrar(statistics.median(r["yaw"]), statistics.median(r["pitch"]))
             self._centrado = True
             self._recentrar = None
@@ -709,7 +877,8 @@ class Maquina:
     # ------------------------------------------------------------ PAUSA
     def _en_pausa(self, t: float, m, g: ResultadoGestos, acc: list) -> EstadoPermanencia:
         # el puntero no se mueve, pero se calcula a dónde apunta la cabeza (para "Reanudar")
-        pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
+        pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n, self._iris(m))
+        self._pos_vista = None
         if self.pausa_auto and not self._compatible():
             self._t_cara_desde = t        # otra cara (el cuidador): no reanuda sola
             if self.motivo_pausa != MOTIVO_OTRA_CARA and len(self._muestras) >= 3 \
@@ -740,7 +909,12 @@ class Maquina:
             return EstadoPermanencia()
         candidatos = [o for o in self._objetivos_libres(pos, t)
                       if o.id in IDS_REANUDAR + (ID_BARRA_MOSTRAR,) + IDS_EMERGENCIA and o.elegible]
-        obj = self._con_tiempo_emergencia(buscar_objetivo(pos, candidatos, self._obj_actual))
+        if self.puntero.usa_ojos:
+            pos = self._aplicar_iman(pos, candidatos, t)
+            self._pos_vista = pos if self._iman is not None else None
+            obj = self._con_tiempo_emergencia(buscar_objetivo(pos, candidatos, self._obj_actual, self._franja()))
+        else:
+            obj = self._con_tiempo_emergencia(buscar_objetivo(pos, candidatos, self._obj_actual))
         self._obj_actual = obj
         if g.gesto_activo:
             self.perm.reiniciar()
@@ -762,11 +936,13 @@ class Maquina:
         permanencia crece con él (no hay clics fantasma con la cabeza quieta)."""
         if self.puntero.temblor_cambio:
             self.puntero.temblor_cambio = False
-            self.perm.ajustar_radio_minimo(RADIO_SIGMAS * self.puntero.temblor_px)
+            self.perm.ajustar_radio_minimo(RADIO_SIGMAS * self.puntero.temblor_px, tope=self._tope_radio())
 
     def _mirando_afuera(self, t: float, m) -> bool:
         """¿La cabeza está muy por fuera de su rango cómodo (mira a otro lado)? Con histéresis.
         Al volver, el deslizamiento del puntero no arma la permanencia."""
+        if self.puntero.usa_ojos:
+            return self._mirando_afuera_ojos(t, m)
         try:
             u, v = self.mapeo.normalizar(float(m.yaw_n), float(m.pitch_n))
             a = max(abs(u), abs(v))
@@ -807,7 +983,10 @@ class Maquina:
         afuera = sub not in SUBMODOS_SIN_PUNTERO and self._mirando_afuera(t, m)
         if afuera:
             self._quitar_gestos_de_clic(g)
-        congelar = (afuera or g.gesto_activo or (g.ojos_cerrando and self._parpadeo_con_accion())
+        # 1.1 paquete C: con los ojos, cerrar los ojos congela SIEMPRE (FaceMesh baja el iris al
+        # cerrarlos y el puntero se iría hacia abajo)
+        congelar = (afuera or g.gesto_activo
+                    or (g.ojos_cerrando and (self._parpadeo_con_accion() or self.puntero.usa_ojos))
                     or self._recentrar is not None or sub == K.DESPLAZAR or sub in SUBMODOS_SIN_PUNTERO
                     or self._cara_en_espera(t))
         if congelar:
@@ -817,10 +996,13 @@ class Maquina:
                 self._desarmar_hasta = t + DESARMAR_TRAS_GESTO_S
             self._clic_gesto_congelado = False
             self.puntero.descongelar(t)
-        pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
-        self._revisar_temblor()
-        if self.puntero.cambio and sub not in SUBMODOS_SIN_PUNTERO:
-            acc.append(Mover(*pos))
+        if not self.puntero.usa_ojos:
+            pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
+            self._revisar_temblor()
+            if self.puntero.cambio and sub not in SUBMODOS_SIN_PUNTERO:
+                acc.append(Mover(*pos))
+        else:
+            pos = self._paso_puntero_ojos(t, m, sub, afuera, acc)
         # ---- eventos de gestos ----
         for ev in g.eventos:
             if isinstance(ev, GestoCorto):
@@ -877,9 +1059,10 @@ class Maquina:
         if sub == K.ARRASTRANDO:
             # arrastrando, quedarse quieto suelta el botón; solo AYUDA se puede elegir encima
             obj = buscar_objetivo(pos, [o for o in self._objetivos_libres(pos, t)
-                                        if o.id in IDS_EMERGENCIA and o.elegible], self._obj_actual)
+                                        if o.id in IDS_EMERGENCIA and o.elegible], self._obj_actual,
+                                  self._franja())
         else:
-            obj = buscar_objetivo(pos, self._objetivos_libres(pos, t), self._obj_actual)
+            obj = buscar_objetivo(pos, self._objetivos_libres(pos, t), self._obj_actual, self._franja())
         obj = self._con_tiempo_emergencia(obj)
         self._obj_actual = obj
         libre = bool(self._p_cfg["activa"]) and (sub == K.ARRASTRANDO or not sobre_ventana_propia(pos, self.objetivos))
@@ -908,10 +1091,36 @@ class Maquina:
                 self._clic_actual(t, pos, acc, por_permanencia=True)
         return st
 
+    def _paso_puntero_ojos(self, t: float, m, sub: str, afuera: bool, acc: list):
+        """1.1 paquete C: el puntero con los ojos (o con ojos y cabeza). Igual que con la cabeza,
+        más: el salto a la mirada no arma la permanencia, el imán hacia los botones propios y el
+        aviso de distancia."""
+        pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n, self._iris(m))
+        self._revisar_temblor()
+        if self.puntero.salto:
+            self._desarmar_tras_deslizar(t)          # saltar a donde mira nunca es un clic
+        self._pos_vista = None
+        if sub in (K.NORMAL, K.ARRASTRE_INICIO, K.LUPA) and not self.puntero.congelado and not afuera:
+            pegado = self._aplicar_iman(pos, self._objetivos_libres(pos, t), t)
+            if self._iman is not None:
+                self._pos_vista = pegado
+                pos = pegado
+        else:
+            self._iman = None
+        if sub not in SUBMODOS_SIN_PUNTERO and (self.puntero.cambio or pos != self._pos_enviada):
+            if pos != self._pos_enviada:
+                acc.append(Mover(*pos))
+                self._pos_enviada = pos
+        self._revisar_distancia(t, m, acc)
+        return pos
+
     def _permanencia_terminar(self, t: float, acc: list) -> EstadoPermanencia:
         """En Desplazar el puntero real queda quieto sobre la página, pero la cabeza sigue
-        apuntando: con ese puntero "virtual" se puede elegir «Terminar» quedándose quieto."""
+        apuntando: con ese puntero "virtual" se puede elegir «Terminar» quedándose quieto.
+        (1.1: con los ojos, el puntero virtual es la mirada.)"""
         f = self.puntero.filtrado
+        if self.puntero.usa_ojos and self.puntero.mirada is not None:
+            f = self.puntero.mirada
         if f is None:
             return EstadoPermanencia()
         vpos = self.mapeo.recortar(*f)
@@ -1016,6 +1225,12 @@ class Maquina:
         modo = self.modo_clic
         if modo == "lupa":
             self._abrir_lupa(t, pos, acc)
+            return
+        if (por_permanencia and modo in ("izq", "doble", "der") and self.puntero.fuente == "ojos"
+                and (self.cfg.get("ojos") or {}).get("lupa", True) and sub == K.NORMAL):
+            # 1.1 paquete C: con los ojos el clic por permanencia pasa por la lupa (los ojos caen a
+            # 3-5 cm de donde miran); el clic se hace dentro de ella, con el modo elegido
+            self._abrir_lupa(t, pos, acc, clic=modo)
             return
         if modo == "ninguno":
             # «Sin clic»: solo llega aquí un gesto de clic (es a propósito) y el modo sigue
@@ -1184,7 +1399,7 @@ class Maquina:
             log.info("La lupa no pudo capturar la zona: no se hace clic")
         return acc
 
-    def _abrir_lupa(self, t: float, pos, acc: list):
+    def _abrir_lupa(self, t: float, pos, acc: list, clic: str = "izq"):
         """La permanencia libre (o el gesto de clic) en el modo «Lupa»: en vez de hacer clic se
         abre la lupa alrededor del punto."""
         c = self.cfg.get("lupa") or {}
@@ -1201,7 +1416,7 @@ class Maquina:
             self._volver_modo_clic()
             log.info("La lupa no cabe sin tapar la zona: no se abre")
             return
-        self._lupa = {"zona": zona, "ventana": ub.ventana, "imagen": ub.imagen, "t0": t}
+        self._lupa = {"zona": zona, "ventana": ub.ventana, "imagen": ub.imagen, "t0": t, "clic": clic}
         self.submodo = K.LUPA
         self._obj_actual = None
         acc.append(Elegir(lupa_mod.id_abrir(zona, ub)))
@@ -1234,7 +1449,13 @@ class Maquina:
         imagen = zobj.rect if zobj is not None else lp["imagen"]
         x, y = lupa_mod.a_pantalla(pos, imagen, lp["zona"])
         acc.append(Mover(x, y))
-        acc.append(Clic(K.IZQ))
+        clic = lp.get("clic", "izq")
+        if clic == "doble":
+            acc.append(Clic(K.IZQ, 2))
+        elif clic == "der":
+            acc.append(Clic(K.DER))
+        else:
+            acc.append(Clic(K.IZQ))
         self.submodo = K.NORMAL
         self._lupa = None
         acc.append(Elegir(lupa_mod.ID_CERRAR))
@@ -1388,7 +1609,7 @@ class Maquina:
             return EstadoPermanencia()
         if self.puntero.congelado:
             self.puntero.descongelar(t)
-        pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n)
+        pos = self.puntero.actualizar(t, m.yaw_n, m.pitch_n, self._iris(m))
         if self.puntero.cambio:
             acc.append(Mover(*pos))
         candidatos = [o for o in self._objetivos_libres(pos, t) if o.id == ID_ATENDIDO and o.elegible]
@@ -1404,11 +1625,12 @@ class Maquina:
     # ------------------------------------------------------------ vista
     def _vista(self, t: float, g: ResultadoGestos, st: EstadoPermanencia, m) -> Vista:
         r = self._recentrar
+        pos_v = self._pos_vista if self._pos_vista is not None and not self.emergencia else self.puntero.posicion
         v = Vista(
             estado=self.estado, submodo=self.submodo, modo_clic=self.modo_clic,
             motivo_pausa=self.motivo_pausa, pausa_auto=self.pausa_auto,
-            puntero=self.puntero.posicion if self.estado != K.PAUSA or self.emergencia else None,
-            puntero_virtual=(self.puntero.posicion if self.estado == K.PAUSA and m is not None
+            puntero=pos_v if self.estado != K.PAUSA or self.emergencia else None,
+            puntero_virtual=(pos_v if self.estado == K.PAUSA and m is not None
                              and not self.emergencia else None),
             permanencia=st, gestos=g,
             sin_cara_s=(t - self._t_sin_cara) if self._t_sin_cara is not None else 0.0,
@@ -1418,7 +1640,8 @@ class Maquina:
             medidas=m, objetivo=self._obj_actual.id if self._obj_actual is not None else None,
             reanuda_parpadeo=self.estado == K.PAUSA and self.reanuda_con_parpadeo(),
             mirando_afuera=self._afuera and self.estado == K.ACTIVO,
-            emergencia=self.emergencia)
+            emergencia=self.emergencia, fuente=self.puntero.fuente,
+            iman=self._iman if self._pos_vista is not None else None)
         self._ultima_vista = v
         return v
 

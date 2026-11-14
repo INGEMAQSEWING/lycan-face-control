@@ -16,10 +16,25 @@ el paso termina con 3 parpadeos largos reconocidos por el mismo clasificador que
 (o, si no los logra en 40 s, sigue con un aviso). Con «Solo comunicación» el puntero no se usa: no
 se piden los cuatro giros de la cabeza (se quedan los rangos de fábrica, sin aviso de "poco
 movimiento").
+
+1.1 paquete C: si el puntero se mueve con los ojos (``puntero.fuente`` distinto de "cabeza"), después
+de «Mirar abajo» van los pasos de la **mirada**, con puntos en la pantalla (``EstadoGuia.punto``,
+en píxeles reales del monitor):
+
+- ``mirada_centro``: 2 s mirando el punto del centro (temblor del iris, cabeza de referencia y
+  distancia a la cámara);
+- ``mirada_puntos``: 9 puntos (o 5): 1,0 s de preparación y 1,2 s de medida por punto, sin los
+  primeros 0,4 s, con la mediana. Un punto con la cabeza movida más de 3 × su temblor se repite
+  (hasta 2 veces; luego se acepta, para no quedar en un ciclo sin fin);
+- ``mirada_cabeza``: 4 s mirando el centro mientras mueve la cabeza (enseña cuánto pesa la cabeza);
+- ``mirada_validar``: 4 puntos nuevos para medir el error real.
+
+En estos pasos el reloj solo corre con la cara **y los dos ojos abiertos**.
 """
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field
 
 import copy
@@ -27,7 +42,8 @@ import copy
 from . import calibracion as C
 from .config import PARPADEO_LARGO_PISO_MS
 from .gestos import Gestos, ParpadeoLargo
-from .mapeo import RANGO_PITCH_FABRICA, RANGO_YAW_FABRICA
+from .mapeo import MONITOR_REFERENCIA, RANGO_PITCH_FABRICA, RANGO_YAW_FABRICA
+from .mirada import ModeloMirada, ambos_ojos, px_por_cm, rasgos
 
 PREPARAR_S = 2.0
 DURACION_S = {
@@ -39,7 +55,40 @@ DURACION_S = {
     "parpadeo_largo": 40.0,  # tope: si en 40 s no hay 3 parpadeos largos, sigue con un aviso
     "gesto_boca": 6.0, "gesto_cejas": 6.0, "gesto_sonrisa": 6.0,
 }
+DURACION_S.update({"mirada_centro": 2.0, "mirada_cabeza": 4.0})
 POSICION_MAX_S = 20.0        # si en 20 s no se logra buena distancia, se sigue con un aviso
+# ---- 1.1 paquete C: mirada ----
+PASOS_MIRADA = ("mirada_centro", "mirada_puntos", "mirada_cabeza", "mirada_validar")
+PUNTO_PREPARAR_S = 1.0
+PUNTO_MEDIR_S = 1.2
+PUNTO_DESCARTAR_S = 0.4
+MARGEN_PUNTOS = 0.08         # los puntos quedan a 8 % del borde
+REPETIR_PUNTO_MAX = 2        # un punto con la cabeza movida se repite hasta 2 veces
+CABEZA_MOVIDA_SIGMAS = 3.0
+PESO_CABEZA = 3.0            # las muestras del paso "cabeza en movimiento" valen como 3 puntos
+ERROR_IMPRECISO_PX = 250     # con más error se recomienda «Ojos y cabeza» o «La cabeza»
+DISTANCIA_SUPUESTA_CM = 60.0
+
+
+def puntos_mirada(monitor, n: int = 9) -> list:
+    """Puntos de la calibración (en píxeles reales): 3 × 3 o el centro y las 4 esquinas."""
+    m = monitor or MONITOR_REFERENCIA
+    fr = (MARGEN_PUNTOS, 0.5, 1.0 - MARGEN_PUNTOS)
+    if int(n) == 5:
+        rel = [(0.5, 0.5), (fr[0], fr[0]), (fr[2], fr[0]), (fr[0], fr[2]), (fr[2], fr[2])]
+    else:
+        rel = [(fx, fy) for fy in fr for fx in fr]
+    return [(m.x + (m.ancho - 1) * fx, m.y + (m.alto - 1) * fy) for fx, fy in rel]
+
+
+def puntos_validar(monitor) -> list:
+    m = monitor or MONITOR_REFERENCIA
+    rel = ((0.3, 0.28), (0.72, 0.3), (0.28, 0.72), (0.7, 0.7))
+    return [(m.x + (m.ancho - 1) * fx, m.y + (m.alto - 1) * fy) for fx, fy in rel]
+
+
+def usa_ojos(cfg: dict) -> bool:
+    return (cfg.get("puntero") or {}).get("fuente", "cabeza") != "cabeza"
 PASO_MAX_DT = 0.25           # un hueco mayor entre cuadros no cuenta como tiempo medido
 GESTOS_PROBABLES = ("boca", "cejas", "sonrisa")
 PARPADEOS_LARGOS = 3         # cierres voluntarios reconocidos para dar el paso por bueno
@@ -60,6 +109,8 @@ def pasos_para(cfg: dict) -> list[str]:
     pasos = ["posicion", "centro"]
     if not sin_puntero(cfg):
         pasos += ["izq", "der", "arr", "aba"]
+        if usa_ojos(cfg):
+            pasos += list(PASOS_MIRADA)            # 1.1 paquete C
     pasos.append("reposo")
     if cfg["gestos"]["parpadeo"].get("activo", True):
         pasos.append("parpadeo")
@@ -85,11 +136,21 @@ class EstadoGuia:
     contador: int = 0              # paso parpadeo_largo: cierres reconocidos
     parpadeo: float | None = None  # paso parpadeo_largo: 0..1 del cierre en curso
     parpadeo_listo: bool = False   # ...ya llegó al tiempo (la barra en verde: puede abrir los ojos)
+    # ---- 1.1 paquete C: mirada ----
+    punto: tuple | None = None     # punto que hay que mirar (px reales del monitor)
+    punto_fase: str = ""           # 'preparar' | 'medir' (el punto se encoge al medir)
+    punto_progreso: float = 0.0    # 0..1 del punto actual
+    sin_ojos: bool = False         # no se ven los dos ojos abiertos: el reloj está detenido
+    repetir_punto: bool = False    # el punto anterior se repite (la cabeza se movió)
 
 
 class Guia:
-    def __init__(self, cfg: dict, t0: float, preparar_s: float = PREPARAR_S, duraciones: dict | None = None):
+    def __init__(self, cfg: dict, t0: float, preparar_s: float = PREPARAR_S, duraciones: dict | None = None,
+                 monitor=None):
         self.cfg = cfg
+        self.monitor = monitor or MONITOR_REFERENCIA
+        self.modelo_mirada = None
+        self.mirada_info = None        # {"error_px", "cm", "boton", "impreciso"} tras validar
         self.pasos = pasos_para(cfg)
         self.preparar_s = float(preparar_s)
         self.dur = dict(DURACION_S)
@@ -122,6 +183,13 @@ class Guia:
         self._n_largos = 0
         self._parpadeo = None
         self._parpadeo_listo = False
+        # 1.1 paquete C: mirada
+        self._sin_ojos = False
+        self._k = 0                    # punto actual
+        self._c = 0.0                  # reloj del punto (solo corre con los dos ojos abiertos)
+        self._sub = []                 # muestras del punto o del paso
+        self._repeticiones = 0
+        self._repetir_punto = False
 
     def repetir(self, t: float):
         self.terminado = False
@@ -193,6 +261,8 @@ class Guia:
             return self.estado(t)
         if p == "parpadeo_largo":
             return self._paso_parpadeo_largo(t, medidas, dt)
+        if p in PASOS_MIRADA:
+            return self._paso_mirada(t, medidas, dt)
         # pasos con tiempo: el Recolector usa un tiempo "medido" (sin los huecos sin cara)
         self._medido += dt
         self._rec.agregar(self._rec.t0 + self._medido, medidas)
@@ -202,6 +272,174 @@ class Guia:
             self._cerrar_paso(p)
             self._siguiente(t)
         return self.estado(t)
+
+    # ------------------------------------------------------------ 1.1 paquete C: mirada
+    def _puntos_paso(self, p: str) -> list:
+        if p == "mirada_puntos":
+            return puntos_mirada(self.monitor, (self.cfg.get("ojos") or {}).get("puntos_cal", 9))
+        if p == "mirada_validar":
+            return puntos_validar(self.monitor) if self.modelo_mirada is not None else []
+        return [self.monitor.centro]
+
+    def _umbral_cabeza(self):
+        tb = self.resultados.get("temblor") or []
+        out = []
+        for i in range(2):
+            try:
+                v = float(tb[i])
+            except (IndexError, TypeError, ValueError):
+                v = 0.0
+            out.append(CABEZA_MOVIDA_SIGMAS * max(v if math.isfinite(v) else 0.0, 0.003))
+        return out
+
+    def _ojos_abiertos(self, m) -> bool:
+        """Los dos ojos con iris y abiertos (EAR de cada ojo al menos el umbral de «abierto» del
+        parpadeo × el de frente; sin medida de frente, el de referencia)."""
+        if not ambos_ojos(m):
+            return False
+        ref = self.resultados.get("ear_centro") or {}
+        umbral = float((self.cfg.get("gestos") or {}).get("parpadeo", {}).get("abierto", 0.70))
+        for k in ("ear_der", "ear_izq"):
+            base = ref.get(k) or C.BASE_REFERENCIA[k]
+            try:
+                v = float(getattr(m, k))
+            except (TypeError, ValueError, AttributeError):
+                return False
+            if not (math.isfinite(v) and v >= umbral * base):
+                return False
+        return True
+
+    def _paso_mirada(self, t: float, m, dt: float) -> EstadoGuia:
+        p = self.paso
+        ojos = self._ojos_abiertos(m)
+        self._sin_ojos = not ojos
+        if not ojos:
+            return self.estado(t)            # el reloj se detiene
+        r = rasgos(m)
+        muestra = (r[0], r[1], float(m.yaw_n), float(m.pitch_n), float(getattr(m, "io_px", float("nan"))))
+        if p in ("mirada_centro", "mirada_cabeza"):
+            self._medido += dt
+            if self._medido >= 0.3 or p == "mirada_cabeza":
+                self._sub.append(muestra)
+            if self._medido >= self.dur[p] - 1e-9:
+                self._cerrar_mirada(p)
+                self._siguiente(t)
+            return self.estado(t)
+        # mirada_puntos y mirada_validar: punto por punto
+        puntos = self._puntos_paso(p)
+        if not puntos:
+            self.resultados[p] = []
+            self._siguiente(t)
+            return self.estado(t)
+        self._c += dt
+        if self._c >= PUNTO_PREPARAR_S + PUNTO_DESCARTAR_S - 1e-9:
+            self._sub.append(muestra)
+        if self._c >= PUNTO_PREPARAR_S + PUNTO_MEDIR_S - 1e-9:
+            self._cerrar_punto(p, puntos[self._k])
+            if self._k >= len(puntos):
+                self._cerrar_mirada(p)
+                self._siguiente(t)
+        return self.estado(t)
+
+    def _mediana(self, filas, i):
+        vals = [f[i] for f in filas if math.isfinite(f[i])]
+        return statistics.median(vals) if vals else float("nan")
+
+    def _cerrar_punto(self, p: str, destino):
+        filas = self._sub
+        self._sub = []
+        self._c = 0.0
+        if not filas:
+            return                                     # sin muestras: se repite el mismo punto
+        med = [self._mediana(filas, i) for i in range(5)]
+        lista = self.resultados.setdefault(p, [])
+        if p == "mirada_puntos":
+            c0 = self.resultados.get("mirada_cabeza0")
+            if c0 is not None:
+                uy, up = self._umbral_cabeza()
+                movida = abs(med[2] - c0[0]) > uy or abs(med[3] - c0[1]) > up
+                if movida and self._repeticiones < REPETIR_PUNTO_MAX:
+                    self._repeticiones += 1
+                    self._repetir_punto = True
+                    return                             # mismo punto otra vez
+        self._repeticiones = 0
+        self._repetir_punto = False
+        lista.append((med[0], med[1], med[2], med[3], float(destino[0]), float(destino[1])))
+        self._k += 1
+
+    def _cerrar_mirada(self, p: str):
+        filas = self._sub
+        self._sub = []
+        if p == "mirada_centro":
+            if not filas:
+                self.resultados[p] = None
+                return
+            c0 = (self._mediana(filas, 2), self._mediana(filas, 3))
+            self.resultados["mirada_cabeza0"] = c0
+            self.resultados["mirada_temblor"] = _temblor_iris(filas)
+            ios = [f[4] for f in filas if math.isfinite(f[4])]
+            ancho = (self.cfg.get("camara") or {}).get("ancho") or 640
+            self.resultados["mirada_io"] = (statistics.median(ios) / float(ancho)) if ios else None
+            self.resultados[p] = c0
+        elif p == "mirada_cabeza":
+            self.resultados[p] = filas
+            self.modelo_mirada = self._ajustar()
+        elif p == "mirada_validar":
+            self._resumen_validacion()
+
+    def _ajustar(self):
+        pts = list(self.resultados.get("mirada_puntos") or [])
+        c0 = self.resultados.get("mirada_cabeza0")
+        if c0 is None or len(pts) < 5:
+            return None
+        muestras = [tuple(x) + (1.0,) for x in pts]
+        cab = self.resultados.get("mirada_cabeza") or []
+        if cab:
+            cx, cy = self.monitor.centro
+            w = PESO_CABEZA / len(cab)
+            muestras += [(f[0], f[1], f[2], f[3], cx, cy, w) for f in cab]
+        return ModeloMirada.ajustar(muestras, c0, temblor_iris=self.resultados.get("mirada_temblor"))
+
+    def _resumen_validacion(self):
+        mod = self.modelo_mirada
+        val = self.resultados.get("mirada_validar") or []
+        errores = []
+        for ix, iy, yaw, pitch, x, y in val:
+            q = mod.predecir(ix, iy, yaw, pitch) if mod is not None else None
+            if q is not None:
+                errores.append(math.hypot(q[0] - x, q[1] - y))
+        if mod is None:
+            self.mirada_info = None
+            return
+        err = statistics.median(errores) if errores else None
+        ppc = px_por_cm(self.monitor)
+        cm = (err / ppc) if err is not None else None
+        self.mirada_info = {
+            "error_px": err,
+            "cm": None if cm is None else max(int(round(cm)), 1),
+            "boton": None if cm is None else max(int(math.ceil(2 * cm)), 1),
+            "impreciso": err is not None and err > ERROR_IMPRECISO_PX,
+            "error_grados": (None if cm is None else math.degrees(math.atan(cm / DISTANCIA_SUPUESTA_CM))),
+        }
+
+    def mirada_para_guardar(self, fecha: str | None = None):
+        """``cal["mirada"]`` (o None si no hubo modelo)."""
+        mod = self.modelo_mirada
+        if mod is None:
+            return None
+        from .calibracion import rect_monitor, tam_camara
+        import time
+        info = self.mirada_info or {}
+        d = mod.como_dict()
+        d.update({
+            "error_px": info.get("error_px"),
+            "error_grados": info.get("error_grados"),
+            "io_fraccion": self.resultados.get("mirada_io"),
+            "monitor": rect_monitor(self.monitor),
+            "camara": tam_camara(self.cfg.get("camara")),
+            "fecha": fecha or time.strftime("%Y-%m-%d %H:%M"),
+        })
+        return {k: (v if not isinstance(v, float) or math.isfinite(v) else None) for k, v in d.items()}
 
     def _base(self) -> dict:
         return self.resultados.get("reposo") or dict(C.BASE_REFERENCIA)
@@ -254,6 +492,10 @@ class Guia:
             c = C.centro(rec)
             self.resultados[p] = c
             self.resultados["temblor"] = C.temblor(rec)
+            # 1.1 paquete C: apertura de los ojos de frente (para saber si están abiertos en la mirada)
+            self.resultados["ear_centro"] = {k: (statistics.median(sorted(v)[len(v) // 2:]) if v else None)
+                                             for k, v in (("ear_der", rec.valores("ear_der")),
+                                                          ("ear_izq", rec.valores("ear_izq")))}
         elif p in ("izq", "der", "arr", "aba"):
             self.resultados[p] = rec
         elif p == "reposo":
@@ -283,11 +525,26 @@ class Guia:
             prog = 0.0 if self._t_bien is None else min((t - self._t_bien) / self.dur["posicion"], 1.0)
         elif p == "parpadeo_largo":
             prog = min(self._n_largos / PARPADEOS_LARGOS, 1.0)
+        elif p in ("mirada_puntos", "mirada_validar"):
+            n = max(len(self._puntos_paso(p)), 1)
+            prog = min((self._k + self._c / (PUNTO_PREPARAR_S + PUNTO_MEDIR_S)) / n, 1.0)
         else:
             prog = min(self._medido / self.dur[p], 1.0)
+        punto, fase_p, prog_p = None, "", 0.0
+        if p in PASOS_MIRADA and not self.terminado:
+            puntos = self._puntos_paso(p)
+            if puntos and self._k < len(puntos):
+                punto = puntos[self._k] if p in ("mirada_puntos", "mirada_validar") else puntos[0]
+                if p in ("mirada_puntos", "mirada_validar") and self.fase == "medir":
+                    fase_p = "medir" if self._c >= PUNTO_PREPARAR_S else "preparar"
+                    prog_p = min(self._c / (PUNTO_PREPARAR_S + PUNTO_MEDIR_S), 1.0)
+                else:
+                    fase_p = "medir" if self.fase == "medir" else "preparar"
+                    prog_p = prog if self.fase == "medir" else 0.0
         return EstadoGuia(p, self.i, len(self.pasos), "terminado" if self.terminado else self.fase, prog,
                           self._sin_cara, self._posicion, self._nivel, list(self.avisos),
-                          self._n_largos, self._parpadeo, self._parpadeo_listo)
+                          self._n_largos, self._parpadeo, self._parpadeo_listo,
+                          punto, fase_p, prog_p, self._sin_ojos and self.fase == "medir", self._repetir_punto)
 
     # ------------------------------------------------------------ resultado
     def resultado(self):
@@ -321,5 +578,24 @@ class Guia:
         durs = self.resultados.get("parpadeo")
         cal = C.construir(c, extremos, base, umbrales, durs if durs is not None else [],
                           temblor_cabeza=self.resultados.get("temblor"))
+        if any(p in self.pasos for p in PASOS_MIRADA):
+            mir = self.mirada_para_guardar(cal.get("fecha"))
+            if mir is not None:
+                cal["mirada"] = mir
         largo = C.parpadeo_largo_ms(durs or [])
         return cal, largo, pocos
+
+
+def _temblor_iris(filas):
+    """Temblor del iris con la mirada quieta (como el de la cabeza: el mayor de la desviación
+    alrededor de la mediana y la de las diferencias entre cuadros), el mayor de los dos ejes."""
+    out = []
+    for i in (0, 1):
+        vals = [f[i] for f in filas if math.isfinite(f[i])]
+        if len(vals) < 10:
+            return None
+        med = statistics.median(vals)
+        mad = 1.4826 * statistics.median([abs(v - med) for v in vals])
+        difs = [abs(b - a) for a, b in zip(vals, vals[1:])]
+        out.append(max(mad, statistics.median(difs) / 0.954))
+    return float(max(out))

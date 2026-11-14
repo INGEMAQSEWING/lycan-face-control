@@ -1060,6 +1060,9 @@ class App:
         if clave == "emergencia_fin":
             self.cerrar_emergencia()
             return
+        # ---- 1.1 paquete C: «Recentrar» con los ojos: se muestra el punto del centro ----
+        if clave == "ojos_recentrar":
+            self.mostrar_punto_centro()
         if clave == "fatal":
             self.mostrar_aviso(t("aviso_fatal"), 8)
             return            # el vigilante reinicia el motor
@@ -1070,6 +1073,18 @@ class App:
         texto = texto_aviso(a)
         if texto:
             self.mostrar_aviso(texto, 8 if clave in ("administrador", "foco_propio", "bloqueo") else 6)
+
+    def mostrar_punto_centro(self):
+        """1.1 paquete C: el punto del centro que hay que mirar al recentrar con los ojos."""
+        if self.root is None:
+            return None
+        try:
+            from .calibracion_mirada import PuntoCentro
+            monitor = self.motor.maquina.mapeo.monitor
+            return PuntoCentro(self.root, monitor, self.cfg.datos)
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo mostrar el punto del centro")
+            return None
 
     def _revisar_foco(self):
         """Cada 250 ms: si la ventana activa es propia, no se escribe en ella; se recuerda la

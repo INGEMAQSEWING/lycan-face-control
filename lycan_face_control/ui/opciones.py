@@ -162,7 +162,62 @@ def _volumen(v):
     return t("op_porcentaje", n=int(round(float(v))))
 
 
-def controles(pestana: str, gesto: str = "boca") -> list:
+def _puntos_cal(v):
+    return t("op_ojos_puntos_valor", n=int(v))
+
+
+CAMARA_OJOS = (1280, 720)       # con los ojos se sugiere esta resolución (el iris se ve mejor)
+
+
+def sugerir_camara(datos: dict) -> bool:
+    """¿Mostrar la sugerencia de subir la cámara a 1280 × 720? Solo con una fuente con ojos."""
+    try:
+        return datos["puntero"].get("fuente", "cabeza") != "cabeza" and int(datos["camara"]["ancho"]) < CAMARA_OJOS[0]
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def controles_ojos(datos: dict | None = None) -> list:
+    """1.1 paquete C: filas de los ojos (página aparte de la pestaña Puntero). Sin ``datos`` van
+    todas; con ``datos`` solo si el puntero se mueve con los ojos."""
+    fuente = "ojos" if datos is None else datos["puntero"].get("fuente", "cabeza")
+    if fuente == "cabeza":
+        return []
+    filas = []
+    if datos is None or sugerir_camara(datos):
+        filas.append(("boton", "camara_ojos", "op_ojos_camara", None, None))
+    filas += [
+        ("num", "ojos.permanencia_s", "op_ojos_permanencia", 0.1, _seg),
+        ("num", "ojos.suavidad", "op_ojos_suavidad", 1, _entero),
+        ("bool", "ojos.iman", "op_ojos_iman", None, None),
+        ("bool", "ojos.lupa", "op_ojos_lupa", None, None),
+    ]
+    if datos is None or fuente == "cabeza_y_ojos":
+        filas += [
+            ("num", "ojos.salto_px", "op_ojos_salto", 20, _entero),
+            ("num", "ojos.ganancia_fina", "op_ojos_fina", 0.1, _veces),
+        ]
+    filas.append(("opc", "ojos.puntos_cal", "op_ojos_puntos", (5, 9), _puntos_cal))
+    return filas
+
+
+def paginas_de(pestana: str, todos: list, por: int) -> list:
+    """Parte los controles en páginas de ``por`` filas. En la pestaña Puntero las filas de los
+    ojos empiezan siempre en una página nueva (1.1 paquete C)."""
+    por = max(int(por), 1)
+    grupos = [todos]
+    if pestana == "puntero":
+        i = next((k for k, c in enumerate(todos) if c[1].startswith("ojos.") or c[1] == "camara_ojos"), None)
+        if i is not None and i > 0:
+            grupos = [todos[:i], todos[i:]]
+    paginas = []
+    for g in grupos:
+        for k in range(0, len(g), por):
+            paginas.append(g[k:k + por])
+    return paginas or [[]]
+
+
+def controles(pestana: str, gesto: str = "boca", datos: dict | None = None) -> list:
     if pestana == "puntero":
         return [
             ("vel", "puntero.sens_x", "op_velocidad", 1, None),
@@ -170,7 +225,9 @@ def controles(pestana: str, gesto: str = "boca") -> list:
             ("num", "puntero.suavidad", "op_suavidad", 1, _entero),
             ("opc", "puntero.modo", "op_modo", OPCIONES["puntero.modo"],
              lambda v: t(f"op_modo_{v}")),
-        ]
+            # 1.1 paquete C: con qué se mueve el puntero (las filas de los ojos van en otra página)
+            ("opc", "puntero.fuente", "op_fuente", OPCIONES["puntero.fuente"], lambda v: t(f"op_fuente_{v}")),
+        ] + controles_ojos(datos)
     if pestana == "clic":
         return [
             ("bool", "permanencia.activa", "op_perm_activa", None, None),
@@ -279,7 +336,7 @@ def ciclar(opciones, actual, signo: int):
 
 # Ayuda corta que se ve debajo del nombre de algunos controles
 AYUDAS_CONTROL = {"puntero.sens_x": "op_velocidad_ayuda", "barra.modo_fijo": "op_barra_fijo_ayuda",
-                  "puntero.ajuste_vertical": "op_ajuste_vertical_ayuda"}
+                  "puntero.ajuste_vertical": "op_ajuste_vertical_ayuda", "puntero.fuente": "op_fuente_ayuda"}
 VEL_ALTO_PX = 76            # botones «Más lento» y «Más rápido»: grandes, elegibles con la cabeza
 
 
@@ -434,11 +491,12 @@ class VentanaOpciones:
         if self.pestana == "atajos":
             tk.Label(self.cuerpo, text=t("op_atajos_ayuda"), bg=T.fondo, fg=T.texto_suave, font=self._f(16, False),
                      wraplength=self.W - 60, justify="left").pack(fill="x", pady=(0, 8))
-        todos = controles(self.pestana, self.gesto)
+        todos = controles(self.pestana, self.gesto, self.datos)
         por = self._filas_pagina()
-        paginas = max((len(todos) + por - 1) // por, 1)
+        lista_paginas = paginas_de(self.pestana, todos, por)
+        paginas = len(lista_paginas)
         self.pagina = min(self.pagina, paginas - 1)
-        filas = todos[self.pagina * por:(self.pagina + 1) * por]
+        filas = lista_paginas[self.pagina]
         for ctl in filas:
             self._fila(ctl)
         if self.pestana == "gestos":
@@ -451,7 +509,7 @@ class VentanaOpciones:
                 self.c_nivel = tk.Canvas(f, width=260, height=26, bg=T.fondo_2, highlightthickness=1,
                                          highlightbackground=T.texto_suave)
                 self.c_nivel.pack(side="left", padx=10)
-        if self.pestana == "puntero":
+        if self.pestana == "puntero" and any(c[1] == "puntero.modo" for c in filas):
             tk.Label(self.cuerpo, text=t("op_modo_ayuda"), bg=T.fondo, fg=T.texto_suave, font=self._f(16, False),
                      wraplength=self.W - 60, justify="left").pack(fill="x", pady=(10, 0))
         if paginas > 1:
@@ -543,6 +601,10 @@ class VentanaOpciones:
             e.pack(side="right", padx=8, pady=6)
             var.trace_add("write", lambda *_a, r=ruta, vv=var: self._texto_cambiado(r, vv))
             self.entradas[ruta] = var
+        elif tipo == "boton" and ruta == "camara_ojos":
+            # 1.1 paquete C: subir la cámara a 1280 × 720 (el iris se ve mejor)
+            b = self._boton(fila, t("op_ojos_camara_si"), "op:camara_ojos", lambda e=None: self._camara_ojos())
+            b.pack(side="right", padx=6, pady=4)
         elif tipo == "boton" and ruta == "probar_alarma":
             # 1.1: «Probar la alarma (3 segundos)»: suena 3 s con la pantalla roja y no cambia nada
             b = self._boton(fila, "▶", "op:probar_alarma", self._probar_alarma, ancho=4)
@@ -592,7 +654,18 @@ class VentanaOpciones:
         elif tipo == "opc":
             escribir(self.datos, ruta, ciclar(extra, leer(self.datos, ruta), signo))
         self._vista_previa()
+        if ruta == "puntero.fuente":
+            # 1.1 paquete C: aparecen o desaparecen las filas de los ojos (y la sugerencia de la cámara)
+            self._armar_cuerpo()
+            return
         self._pintar_valor(ruta)
+
+    def _camara_ojos(self):
+        """Sube la cámara a 1280 × 720 (se prueba al instante; «Cancelar» la devuelve)."""
+        self.datos["camara"]["ancho"], self.datos["camara"]["alto"] = CAMARA_OJOS
+        self._vista_previa()
+        self.app.mostrar_aviso(t("op_ojos_camara_hecho"), 8)
+        self._armar_cuerpo()
 
     def _poner_velocidad(self, n: int):
         """La velocidad escribe los tres valores juntos: sens_x, sens_y y joystick_g."""

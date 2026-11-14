@@ -28,6 +28,19 @@ En los tres:
   salta).
 - ``actualizar`` devuelve la posición entera; ``cambio`` dice si cambió (no se envía ``Mover``
   si la posición entera es la misma).
+
+1.1 paquete C, **fuente** del puntero (``puntero.fuente``):
+- ``cabeza`` (de fábrica): todo igual que en la 1.0 (los caminos nuevos ni se tocan).
+- ``ojos``: el puntero va a donde dice el modelo de la mirada (``mirada.ModeloMirada``), pasado por
+  el filtro de fijación y sacada y luego por ``_paso_absoluto`` (zona muerta, recorte, mezclas).
+  Siempre absoluto. Sin iris (ojo cerrado, sin los puntos del iris) el puntero **se queda quieto**:
+  nunca cae a la cabeza.
+- ``cabeza_y_ojos``: la cabeza mueve el puntero en modo relativo con ``ojos.ganancia_fina``; al
+  empezar una fijación de ``ojos.fijacion_ms`` a más de ``ojos.salto_px`` del puntero, el puntero
+  salta a la mirada con una mezcla de 150 ms (``salto`` = True en ese cuadro: la máquina desarma
+  la permanencia, el salto nunca hace clic).
+Si la fuente pide los ojos pero no hay una calibración de la mirada válida (o es de otro monitor o
+de otra resolución de la cámara), se usa la cabeza y ``aviso_fuente`` = "ojos_sin_calibrar".
 """
 from __future__ import annotations
 
@@ -36,6 +49,7 @@ from collections import deque
 
 from .filtros import OneEuro
 from .mapeo import MapeoCabeza
+from .mirada import SACADA_MIN_PX, SACADA_SIGMAS, FiltroFijacion
 
 # Suavidad 1..5 (sección 3.7): más alto = más suave (y un poco más lento)
 SUAVIDAD_MIN_CUTOFF = (2.0, 1.5, 1.0, 0.7, 0.5)
@@ -75,6 +89,44 @@ JOYSTICK_ZONA_MIN = 0.12        # zona muerta del joystick (fracción del rango 
 JOYSTICK_SIGMAS = 5.0           # ...o 5 x el temblor filtrado en u, lo que sea mayor
 
 MODOS = ("absoluto", "relativo", "joystick")
+# ---- 1.1 paquete C: mover con los ojos ----
+FUENTES = ("cabeza", "ojos", "cabeza_y_ojos")
+MEZCLA_SALTO_S = 0.15            # el salto a la mirada se mezcla en ~150 ms
+
+
+class _FuenteMirada:
+    """La mirada como fuente del puntero, con la misma interfaz que el mapeo para lo que usa el
+    puntero (``monitor``, ``recortar``, ``ganancia_px``) y ``a_pixeles`` con el iris."""
+
+    def __init__(self, modelo, monitor, suavidad: int = 3, dt: float = DT_TIPICO):
+        self.modelo = modelo
+        self.monitor = monitor
+        gx, gy = modelo.ganancia_px()
+        self.ruido_crudo_px = modelo.temblor_iris * max(gx, gy)
+        self.filtro = FiltroFijacion(suavidad, max(SACADA_MIN_PX, SACADA_SIGMAS * self.ruido_crudo_px))
+        self.temblor_px = self.ruido_crudo_px * self.filtro.atenuacion(dt)
+        self.crudo = None                 # última mirada sin filtrar
+        self.crudo_sin_desplazamiento = None
+
+    def a_pixeles(self, t: float, iris, yaw: float, pitch: float):
+        """Mirada filtrada (sin recortar) o None si no hay iris."""
+        if iris is None:
+            self.crudo = self.crudo_sin_desplazamiento = None
+            return None
+        p = self.modelo.predecir(iris[0], iris[1], yaw, pitch)
+        if p is None:
+            self.crudo = self.crudo_sin_desplazamiento = None
+            return None
+        self.crudo = p
+        d = self.modelo.desplazamiento
+        self.crudo_sin_desplazamiento = (p[0] - d[0], p[1] - d[1])
+        return self.filtro(p[0], p[1], t)
+
+    def ganancia_px(self):
+        return self.modelo.ganancia_px()
+
+    def recortar(self, x: float, y: float):
+        return self.monitor.recortar(x, y)
 
 
 def _alfa_filtro(cutoff: float, dt: float) -> float:
@@ -109,6 +161,7 @@ class Puntero:
     def __init__(self, mapeo: MapeoCabeza, modo: str = "absoluto", suavidad: int = 3, zona_muerta_px: float = 4.0,
                  aceleracion: int = 0, posicion_inicial=None, temblor=None,
                  temblor_defecto: float = TEMBLOR_FABRICA):
+        self._mirada: _FuenteMirada | None = None   # 1.1: con la cabeza, None (camino de la 1.0)
         self.mapeo = mapeo
         self.modo = modo if modo in MODOS else "absoluto"
         self.temblor = _temblor(temblor, temblor_defecto)
@@ -137,14 +190,55 @@ class Puntero:
         self.filtrado = None                      # última posición filtrada (sin recortar)
         self._v_filtrada = 0.0
         self.joystick_moviendo = False            # joystick fuera de su zona muerta (el puntero avanza)
+        # 1.1 paquete C: fuente del puntero (cabeza, ojos, ojos y cabeza)
+        self.fuente = "cabeza"
+        self.fuente_pedida = "cabeza"
+        self.aviso_fuente = None                  # "ojos_sin_calibrar" si se pidió ojos sin calibrarlos
+        self.mirada = None                        # mirada filtrada (px, sin recortar) o None
+        self.salto = False                        # cabeza_y_ojos: saltó a la mirada en este cuadro
+        self._salto = None                        # (t0, desde, hasta) del salto en curso
+        self._fij_usada = None                    # fijación que ya se revisó para saltar
+        self._fijacion_s = 0.25
+        self._salto_px = 200.0
+        self._fina = 0.4
 
     @classmethod
     def desde_config(cls, cfg: dict, mapeo: MapeoCabeza, posicion_inicial=None, calibracion: dict | None = None):
         p = cfg["puntero"]
         temblor = calibracion.get("temblor") if isinstance(calibracion, dict) else None
         defecto = TEMBLOR_SIN_MEDIR if isinstance(calibracion, dict) else TEMBLOR_FABRICA
-        return cls(mapeo, p["modo"], p["suavidad"], p["zona_muerta_px"], p["aceleracion"], posicion_inicial,
-                   temblor, defecto)
+        pt = cls(mapeo, p["modo"], p["suavidad"], p["zona_muerta_px"], p["aceleracion"], posicion_inicial,
+                 temblor, defecto)
+        fuente = p.get("fuente", "cabeza")
+        if fuente in FUENTES and fuente != "cabeza":
+            from .calibracion import modelo_mirada
+            cal_m = calibracion.get("mirada") if isinstance(calibracion, dict) else None
+            modelo = modelo_mirada(cal_m, mapeo.monitor, cfg.get("camara"))
+            pt.fuente_pedida = fuente
+            if modelo is None:
+                pt.aviso_fuente = "ojos_sin_calibrar"     # se usa la cabeza (la opción guardada no se borra)
+            else:
+                pt.poner_mirada(fuente, modelo, cfg.get("ojos") or {})
+        return pt
+
+    def poner_mirada(self, fuente: str, modelo, ojos: dict | None = None):
+        """Mover con los ojos (``ojos``) o con ojos y cabeza (``cabeza_y_ojos``)."""
+        if fuente not in ("ojos", "cabeza_y_ojos") or modelo is None:
+            return
+        o = ojos or {}
+        self.fuente = self.fuente_pedida = fuente
+        self.aviso_fuente = None
+        self._mirada = _FuenteMirada(modelo, self.mapeo.monitor, int(o.get("suavidad", 3)), self._dt_calc)
+        self._fijacion_s = float(o.get("fijacion_ms", 250)) / 1000.0
+        self._salto_px = float(o.get("salto_px", 200))
+        self._fina = float(o.get("ganancia_fina", 0.4))
+        # los ojos son siempre absolutos; con ojos y cabeza, la cabeza afina en modo relativo
+        self.modo = "absoluto" if fuente == "ojos" else "relativo"
+        self._calcular_temblor()
+
+    @property
+    def usa_ojos(self) -> bool:
+        return self._mirada is not None
 
     # ------------------------------------------------------------ ajustes
     def poner_suavidad(self, nivel: int):
@@ -166,6 +260,16 @@ class Puntero:
         ux, uy = self.mapeo.ganancia_uv()
         z = max(JOYSTICK_ZONA_MIN, JOYSTICK_SIGMAS * max(sx * atenua * ux, sy * atenua * uy))
         self.zona_joystick = min(z, 0.5)
+        mir = self._mirada
+        if mir is not None:
+            if self.fuente == "ojos":
+                # con los ojos, el temblor que cuenta es el de la mirada (ya filtrada)
+                mir.temblor_px = mir.ruido_crudo_px * mir.filtro.atenuacion(self._dt_calc)
+                self.temblor_px = mir.temblor_px
+                self.zona_muerta = max(self._zona_cfg, ZONA_MUERTA_SIGMAS * self.temblor_px)
+            else:
+                # ojos y cabeza: la cabeza mueve con la ganancia fina (la zona muerta es de la cabeza)
+                self.temblor_px *= self._fina
 
     @property
     def posicion(self):
@@ -186,6 +290,8 @@ class Puntero:
         self.historial.clear()
         self._ancla = None
         self._f_ant = None
+        if self._mirada is not None:
+            self._salto = None
         if t is not None and self.modo == "absoluto":
             self._mezcla = (t, MEZCLA_REENTRADA_S, self._pos[0], self._pos[1])
 
@@ -234,6 +340,9 @@ class Puntero:
         self._ancla = None
         self._f_ant = None
         self._t_ant = None
+        if self._mirada is not None:
+            self._mirada.filtro.reiniciar()
+            self._salto = None
         if self.modo == "absoluto":
             self._mezcla = (t, MEZCLA_REENTRADA_S, self._pos[0], self._pos[1])
 
@@ -241,6 +350,9 @@ class Puntero:
         """Tras recentrar o cambiar la calibración: sin saltos (mezcla de 500 ms)."""
         self._fx.reset()
         self._fy.reset()
+        if self._mirada is not None:
+            self._mirada.filtro.reiniciar()
+            self._salto = None
         self.filtrado = None
         self._ancla = None
         self._f_ant = None
@@ -248,8 +360,11 @@ class Puntero:
             self._mezcla = (t, MEZCLA_REENTRADA_S, self._pos[0], self._pos[1])
 
     # ------------------------------------------------------------ paso
-    def actualizar(self, t: float, yaw: float, pitch: float):
-        """Un cuadro con cara. Devuelve la posición entera (x, y). ``self.cambio`` = cambió."""
+    def actualizar(self, t: float, yaw: float, pitch: float, iris=None):
+        """Un cuadro con cara. Devuelve la posición entera (x, y). ``self.cambio`` = cambió.
+        ``iris`` = (iris_x, iris_y) o None; solo se usa con las fuentes con ojos."""
+        if self._mirada is not None:
+            return self._actualizar_con_ojos(t, yaw, pitch, iris)
         if self.sin_cara:
             self.recuperar_cara(t)
         fyaw = self._fx(yaw, t)
@@ -281,6 +396,95 @@ class Puntero:
         while self.historial and self.historial[0][0] < t - HISTORIAL_S:
             self.historial.popleft()
         return self._actualizar_entero()
+
+    # ------------------------------------------------------------ 1.1 paquete C: ojos
+    def _actualizar_con_ojos(self, t: float, yaw: float, pitch: float, iris):
+        if self.sin_cara:
+            self.recuperar_cara(t)
+        fyaw = self._fx(yaw, t)
+        fpitch = self._fy(pitch, t)
+        hx, hy = self.mapeo.a_pixeles(fyaw, fpitch)       # la cabeza sigue midiéndose (Desplazar)
+        dt = DT_MAX if self._t_ant is None else min(max(t - self._t_ant, 1e-3), DT_MAX)
+        if self._t_ant is not None and dt < 0.2:
+            self._medir_ritmo(t, dt)
+        if self.filtrado is not None and self._t_ant is not None:
+            self._v_filtrada = math.hypot(hx - self.filtrado[0], hy - self.filtrado[1]) / dt
+        else:
+            self._v_filtrada = 0.0
+        self.filtrado = (hx, hy)
+        self._t_ant = t
+        self.salto = False
+        g = None
+        if iris is not None:
+            try:
+                ix, iy = float(iris[0]), float(iris[1])
+                if math.isfinite(ix) and math.isfinite(iy):
+                    g = self._mirada.a_pixeles(t, (ix, iy), fyaw, fpitch)
+            except (TypeError, ValueError, IndexError):
+                g = None
+        if g is None:
+            self._mirada.a_pixeles(t, None, fyaw, fpitch)
+        self.mirada = g
+        anterior = self._pos
+        if self.congelado:
+            self._pos = self._pos_fija if self._pos_fija is not None else self._pos
+            self._f_ant = (hx, hy)
+        elif self.fuente == "ojos":
+            if g is not None:                    # sin iris: quieto (nunca cae a la cabeza)
+                self._paso_absoluto(t, g[0], g[1])
+        else:
+            self._paso_mixto(t, hx, hy, g)
+        d = math.hypot(self._pos[0] - anterior[0], self._pos[1] - anterior[1])
+        self.velocidad = d / dt if dt > 0 else 0.0
+        self.historial.append((t, self._pos[0], self._pos[1]))
+        while self.historial and self.historial[0][0] < t - HISTORIAL_S:
+            self.historial.popleft()
+        return self._actualizar_entero()
+
+    def _paso_mixto(self, t: float, hx: float, hy: float, g):
+        """Ojos y cabeza: la mirada lleva el puntero cerca (salto al empezar una fijación lejana) y
+        la cabeza lo afina (relativo, con la ganancia fina)."""
+        if self._salto is not None:
+            t0, (x0, y0), (x1, y1) = self._salto
+            a = (t - t0) / MEZCLA_SALTO_S
+            if a >= 1.0:
+                self._pos = (float(x1), float(y1))
+                self._salto = None
+            else:
+                a = max(a, 0.0)
+                self._pos = (x0 + (x1 - x0) * a, y0 + (y1 - y0) * a)
+            self._ancla = None                   # la cabeza sigue desde aquí, sin arrastrar el salto
+            return
+        f = self._mirada.filtro
+        if g is not None and f.en_fijacion(t, self._fijacion_s) and f.t_fijacion_desde != self._fij_usada:
+            # una sola revisión por fijación: después la cabeza puede afinar sin que la mirada la tire
+            self._fij_usada = f.t_fijacion_desde
+            gx, gy = self.mapeo.recortar(*g)
+            if math.hypot(gx - self._pos[0], gy - self._pos[1]) > self._salto_px:
+                self._salto = (t, self._pos, (float(gx), float(gy)))
+                self.salto = True
+                self._ancla = None
+                return
+        ancla_ant = self._ancla
+        ax, ay = self._con_zona_muerta(hx, hy)
+        if ancla_ant is None or (ax, ay) == ancla_ant:
+            return
+        dx, dy = (ax - ancla_ant[0]) * self._fina, (ay - ancla_ant[1]) * self._fina
+        x, y = self.mapeo.recortar(self._pos[0] + dx, self._pos[1] + dy)
+        self._pos = (float(x), float(y))
+
+    def mirada_cruda(self):
+        """La mirada de este cuadro sin filtrar y sin el desplazamiento de «Recentrar» (o None)."""
+        return None if self._mirada is None else self._mirada.crudo_sin_desplazamiento
+
+    def recentrar_mirada(self, crudo, t: float | None = None) -> bool:
+        """«Recentrar» con los ojos: la persona miró el centro; se corrige solo el desplazamiento."""
+        if self._mirada is None:
+            return False
+        ok = self._mirada.modelo.recentrar(crudo, self.mapeo.monitor.centro)
+        if ok:
+            self.reiniciar_filtros(t)
+        return ok
 
     def _medir_ritmo(self, t: float, dt: float):
         self._dt_medio += DT_MEDIO_ALFA * (dt - self._dt_medio)
