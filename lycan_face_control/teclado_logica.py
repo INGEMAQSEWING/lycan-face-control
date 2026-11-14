@@ -420,6 +420,7 @@ ACCION_EMERGENCIA = "emergencia"
 ACCIONES = ACCIONES + (ACCION_EMERGENCIA,)
 ACCIONES_FILA = tuple(a for a in ACCIONES_FILA if a != ACCION_EMERGENCIA)
 PESO_ACCION_TEXTO = 1.4
+PESO_EMERGENCIA = 1.8         # «AYUDA» en negrita de 20-22 pt cabe aun con 1024 px de pantalla
 PESO_MINIMIZAR = 1.8          # «Minimizar» en negrita de 20 pt cabe aun con 1040 px de ancho
 N_SUGERENCIAS = 5
 N_RAPIDAS = 5               # frases de la fila rápida además de Sí y No
@@ -492,7 +493,7 @@ def disposicion(filas_teclas: list[list[Tecla]], ancho: int, alto_max: int, sep:
     y = sep
     util = ancho - 2 * sep
     # 1. texto + botones grandes
-    primero = [(f"accion:{ACCION_EMERGENCIA}", PESO_ACCION_TEXTO)] if emergencia else []
+    primero = [(f"accion:{ACCION_EMERGENCIA}", PESO_EMERGENCIA)] if emergencia else []
     fila = _repartir(primero + [("texto", 6.0)] +
                      [(f"accion:{a}", PESO_MINIMIZAR if a == ACCION_MINIMIZAR else PESO_ACCION_TEXTO)
                       for a in acciones_texto], sep, y, util, th, sep)

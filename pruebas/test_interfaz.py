@@ -253,6 +253,33 @@ def bombear(root, ms=200):
         time.sleep(0.01)
 
 
+def ir_a_fila(op, ruta: str) -> bool:
+    """Opciones: va a la página de la pestaña donde está la fila ``ruta`` (en una pantalla chica,
+    como la de GitHub de 1024 × 768, las filas se reparten en más páginas)."""
+    op.pagina = 0
+    op.ir_pagina(0)
+    while ruta not in op.etiquetas_valor:
+        antes = op.pagina
+        op.ir_pagina(+1)
+        if op.pagina == antes:          # ya era la última página
+            return False
+    op.win.update()
+    return True
+
+
+def filas_de_todas_las_paginas(op) -> set:
+    """Opciones: las filas (rutas) de todas las páginas de la pestaña actual."""
+    op.pagina = 0
+    op.ir_pagina(0)
+    vistas = set(op.etiquetas_valor)
+    while True:
+        antes = op.pagina
+        op.ir_pagina(+1)
+        if op.pagina == antes:
+            return vistas
+        vistas |= set(op.etiquetas_valor)
+
+
 def test_registro_publica_rectangulos_y_elige(root):
     from lycan_face_control.ui.comun import BotonGrande
     from lycan_face_control.ui.objetivos import Registro

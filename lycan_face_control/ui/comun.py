@@ -8,6 +8,7 @@ color (cada estado lleva también texto e ícono).
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from dataclasses import dataclass
 
 from .. import constantes as K
@@ -174,6 +175,9 @@ def area_libre(app, ventana) -> tuple[int, int, int, int]:
 
 
 # --------------------------------------------------------------------------- botón grande
+PT_MIN_AJUSTE = 12          # la letra de un botón que se ajusta nunca baja de aquí
+
+
 class BotonGrande(tk.Label):
     """Botón grande hecho con una etiqueta (se ve igual en todos los Windows y se puede resaltar).
 
@@ -202,6 +206,7 @@ class BotonGrande(tk.Label):
             self.configure(height=alto)
         self._resaltado = False
         self._activo = False
+        self._ajuste = None            # (ancho, alto, mínimo, letra base) si la letra se ajusta a la caja
         self.bind("<Button-1>", self._clic, add="+")
         self.bind("<Enter>", lambda e=None: self._hover(True), add="+")
         self.bind("<Leave>", lambda e=None: self._hover(False), add="+")
@@ -218,6 +223,56 @@ class BotonGrande(tk.Label):
         if texto != self._texto or icono is not None:
             self._texto = texto
             self.configure(text=self._componer())
+            self._reajustar()
+
+    # ---- letra que se ajusta a la caja (pantallas pequeñas, p. ej. 1024 × 768 u 800 × 600) ----
+    def ajustar_letra(self, ancho: int, alto: int | None = None, minimo: int = PT_MIN_AJUSTE):
+        """El texto se lee siempre completo dentro de ``ancho`` × ``alto`` píxeles (la caja del
+        botón): si con la letra pedida no cabe, la letra baja de a un punto hasta ``minimo``.
+        En pantallas grandes no cambia nada. Se vuelve a ajustar cada vez que cambia el texto."""
+        self._ajuste = (int(ancho), int(alto) if alto else None, int(minimo), self.cget("font"))
+        self._reajustar()
+
+    def _lineas(self, f, util: int) -> list[str] | None:
+        """Las líneas que pinta la etiqueta con ``wraplength`` = ``util``; None si una palabra
+        sola ya no cabe a lo ancho."""
+        out = []
+        for parrafo in self._componer().split("\n"):
+            actual = ""
+            for palabra in parrafo.split(" "):
+                if f.measure(palabra) > util:
+                    return None
+                prueba = f"{actual} {palabra}" if actual else palabra
+                if actual and f.measure(prueba) > util:
+                    out.append(actual)
+                    actual = palabra
+                else:
+                    actual = prueba
+            out.append(actual)
+        return out
+
+    def _reajustar(self):
+        if not self._ajuste:
+            return
+        ancho, alto, minimo, base = self._ajuste
+        try:
+            f = tkfont.Font(root=self, font=base)
+            margen = 2 * (int(self.cget("highlightthickness")) + int(self.cget("padx")) + int(self.cget("bd")))
+            margen_v = 2 * (int(self.cget("highlightthickness")) + int(self.cget("pady")) + int(self.cget("bd")))
+            util = max(ancho - margen, 10)
+            tam = abs(int(f.actual("size")))
+            while True:
+                lineas = self._lineas(f, util)
+                cabe = lineas is not None and (alto is None or len(lineas) * f.metrics("linespace") <= alto - margen_v)
+                if cabe or tam <= minimo:
+                    break
+                tam -= 1
+                f.configure(size=tam)
+            familia, peso = f.actual("family"), f.actual("weight")
+            self.configure(font=(familia, tam, "bold") if peso == "bold" else (familia, tam),
+                           wraplength=util)
+        except tk.TclError:
+            pass
 
     @property
     def texto(self) -> str:

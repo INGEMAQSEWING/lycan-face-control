@@ -25,7 +25,7 @@ from lycan_face_control.teclado_logica import (ACCION_MINIMIZAR, ACCIONES, ACCIO
 from lycan_face_control.ui import opciones as OP
 from lycan_face_control.ui import textos as T
 from lycan_face_control.ui.barra import ALTO_MIN, MARGEN_BORDE, PESTANA_CORTO, PESTANA_LARGO, medidas_barra
-from test_interfaz import _girar, app_viva, bombear, root  # noqa: F401  (fixtures)
+from test_interfaz import _girar, app_viva, bombear, ir_a_fila, root  # noqa: F401  (fixtures)
 from test_teclado import _elegir
 
 
@@ -237,6 +237,8 @@ def test_velocidad_arriba_y_abajo_recalcula_la_vertical(app_viva):
     app = app_viva
     op = app.abrir_opciones()
     _girar(app, 200)
+    assert ir_a_fila(op, "puntero.ajuste_vertical")       # en pantalla chica puede estar en la página 2
+    _girar(app, 100)
     lbl, ctl = op.etiquetas_valor["puntero.ajuste_vertical"]
     assert lbl.cget("text") == "120 %"
     f = tkfont.Font(root=app.root, font=lbl.cget("font"))
@@ -457,20 +459,55 @@ def test_la_lupa_se_cierra_si_la_maquina_ya_no_esta_en_lupa(app_viva):
     assert app.lupa is None
 
 
+def _yaw_hacia_lugar_libre(m) -> float:
+    """Grados de giro de la cabeza sintética que dejan el puntero en el medio del hueco más ancho
+    entre los objetivos propios (ventanas, barra), a la altura del centro."""
+    from lycan_face_control.cara import medir_si_valida
+    from sintetico import cara
+
+    def x_de(grados):
+        med = medir_si_valida(cara(yaw=grados), 640, 480)
+        return m.mapeo.a_pixeles(med.yaw_n, med.pitch_n)
+
+    _x, y = x_de(0.0)
+    mon = m.mapeo.monitor
+    ocupados = sorted((o.rect[0], o.rect[2]) for o in m.objetivos if o.rect[1] - 20 <= y <= o.rect[3] + 20)
+    huecos, x = [], mon.x + 40
+    for a, b in ocupados:
+        if a > x:
+            huecos.append((x, a))
+        x = max(x, b)
+    huecos.append((x, mon.x + mon.ancho - 40))
+    a, b = max(huecos, key=lambda h: h[1] - h[0])
+    assert b - a >= 60, (huecos, ocupados)
+    meta = (a + b) / 2
+    lo, hi = -9.0, 9.0                     # la x crece con el giro (bisección)
+    for _ in range(30):
+        mitad = (lo + hi) / 2
+        if x_de(mitad)[0] < meta:
+            lo = mitad
+        else:
+            hi = mitad
+    return (lo + hi) / 2
+
+
 def test_lupa_completa_con_el_motor(tmp_path):
     """De punta a punta con el motor: modo Lupa, la cabeza (sintética) se queda quieta, la
     máquina abre la lupa en vez de hacer clic, la interfaz la muestra y abrir Opciones la cierra
     sin clic."""
     from conftest import verificar_invariantes
     from test_interfaz import _app
-    # la cabeza se mueve al empezar (para armar la permanencia) y después se queda quieta
+    # la cabeza se mueve al empezar (para armar la permanencia) y después se queda quieta en
+    # ``base`` grados: un lugar libre (fuera de la ventana principal y de la barra), que se calcula
+    # con las ventanas reales, porque en una pantalla chica (1024 × 768) la barra queda en otro lugar
     t0 = []
+    base = [2.0]
 
     def cabeza(t):
         if not t0:
             t0.append(t)
         r = t - t0[0]          # el reloj de la cámara es el del sistema: se cuenta desde el primer cuadro
-        return {"yaw": 2.0 + (3.0 * math.sin(2.5 * r) * (4.0 - r) / 4.0 if r < 4.0 else 0.0)}
+        return {"yaw": base[0] + (3.0 * math.sin(2.5 * r) * (4.0 - r) / 4.0 if r < 4.0 else 0.0)}
     app = _app(tmp_path, funcion=cabeza)
     app.capturar_lupa = _imagen_prueba
     app.motor.start()
@@ -481,6 +518,9 @@ def test_lupa_completa_con_el_motor(tmp_path):
         pytest.skip(f"sin pantalla ({e})")
     try:
         m = app.motor.maquina
+        _girar(app, 300)
+        base[0] = _yaw_hacia_lugar_libre(m)
+        t0.clear()                         # vuelve a moverse desde el lugar nuevo y después se queda
         app.orden("elegir", "barra:lupa")
         fin = 0
         while app.lupa is None and fin < 100:

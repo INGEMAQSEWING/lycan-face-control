@@ -194,3 +194,30 @@ class Sim:
 @pytest.fixture
 def sim():
     return Sim()
+
+
+# ---------------------------------------------------------------------------------------------
+# Pantalla simulada: con LYCAN_PANTALLA_PRUEBA=1024x768 (o 800x600) las pruebas ven un monitor de
+# ese tamaño (área de trabajo sin 40 px de barra de tareas), como en la compilación de GitHub.
+# Así se reproducen en este PC los fallos que solo salen en pantallas pequeñas.
+# ---------------------------------------------------------------------------------------------
+import os  # noqa: E402
+
+_PANTALLA = os.environ.get("LYCAN_PANTALLA_PRUEBA", "").lower().strip()
+
+
+@pytest.fixture(autouse=True)
+def _pantalla_simulada(monkeypatch):
+    if not _PANTALLA:
+        yield
+        return
+    import tkinter as tk
+    from lycan_face_control.mapeo import Monitor
+    from lycan_face_control.sistema import pantallas
+    w, h = (int(v) for v in _PANTALLA.split("x"))
+    mon = Monitor(0, 0, w, h, True, trabajo=(0, 0, w, h - 40))
+    monkeypatch.setattr(pantallas, "monitores", lambda: [mon])
+    monkeypatch.setattr(pantallas, "escritorio_virtual", lambda: (0, 0, w, h))
+    monkeypatch.setattr(tk.Misc, "winfo_screenwidth", lambda self: w)
+    monkeypatch.setattr(tk.Misc, "winfo_screenheight", lambda self: h)
+    yield

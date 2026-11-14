@@ -16,7 +16,8 @@ from lycan_face_control.ui import opciones as OP
 from lycan_face_control.ui import textos as T
 from lycan_face_control.ui.calibracion_mirada import RADIO_MEDIR_MIN, RADIO_PREPARAR, radio_punto
 from ojos_sinteticos import MON, cal_con_mirada, medidas_mirando
-from test_interfaz import DUR_CORTAS, _girar, app_viva, bombear, root  # noqa: F401  (fixtures)
+from test_interfaz import (DUR_CORTAS, _girar, app_viva, bombear, filas_de_todas_las_paginas,  # noqa: F401
+                            ir_a_fila, root)
 
 POR_PASO = {"izq": medidas(yaw_n=-0.06), "der": medidas(yaw_n=0.11), "arr": medidas(pitch_n=0.45),
             "aba": medidas(pitch_n=0.66), "gesto_boca": medidas(mar=0.5), "gesto_cejas": medidas(cejas=0.45)}
@@ -153,28 +154,21 @@ def test_opciones_mover_el_puntero_con_y_las_filas_de_los_ojos(app_viva):
     _girar(app, 200)
     ctl = next(c for c in OP.controles("puntero") if c[1] == "puntero.fuente")
     # la fila puede quedar en la página 2 si la pantalla es chica
-    while "puntero.fuente" not in op.etiquetas_valor and "op:pagina:siguiente" in {e.ident for e in app.registro.entradas}:
-        op.ir_pagina(+1)
-    assert "puntero.fuente" in op.etiquetas_valor
+    assert ir_a_fila(op, "puntero.fuente")
     op.cambiar(ctl, +1)
     assert op.datos["puntero"]["fuente"] == "ojos"
     lbl, _ = op.etiquetas_valor["puntero.fuente"]
     assert lbl.cget("text") == T.t("op_fuente_ojos")
-    # las filas de los ojos están en las páginas siguientes
-    vistas = set()
-    for _ in range(4):
-        vistas |= set(op.etiquetas_valor)
-        if "op:pagina:siguiente" not in {e.ident for e in app.registro.entradas}:
-            break
-        op.ir_pagina(+1)
-        app.root.update()
-        vistas |= set(op.etiquetas_valor)
+    # las filas de los ojos están en las páginas siguientes (cuántas, depende de la pantalla)
+    vistas = filas_de_todas_las_paginas(op)
     assert {"ojos.permanencia_s", "ojos.iman", "ojos.lupa", "ojos.puntos_cal"} <= vistas
     # la sugerencia de la cámara
     op.pagina = 0
     op.ir_pagina(0)
     while "op:camara_ojos" not in {e.ident for e in app.registro.entradas}:
+        antes = op.pagina
         op.ir_pagina(+1)
+        assert op.pagina != antes, "no está la sugerencia de la cámara en ninguna página"
     app.registro.elegir("op:camara_ojos", "raton")
     assert (op.datos["camara"]["ancho"], op.datos["camara"]["alto"]) == OP.CAMARA_OJOS
     assert not OP.sugerir_camara(op.datos)

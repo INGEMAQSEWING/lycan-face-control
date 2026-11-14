@@ -240,6 +240,10 @@ class VentanaTeclado:
             if caja.id in ids_fila_acciones:
                 b.configure(padx=2)
             b.configure(wraplength=max(caja.ancho - 12, 40))
+            if caja.id.startswith("accion:"):
+                # 1.1: en pantallas pequeñas (1024 × 768, 800 × 600) la letra baja lo justo para
+                # que «Cómo usar», «Borrar palabra»... se lean completos; en 1366 × 768 no cambia
+                b.ajustar_letra(caja.ancho, caja.alto)
             b.place(x=caja.x, y=caja.y, width=caja.ancho, height=caja.alto)
             reg.agregar(caja.id, b, (lambda i=caja.id: self.elegir(i)))
             self.botones[caja.id] = b
@@ -277,7 +281,8 @@ class VentanaTeclado:
         b = BotonGrande(self.win, t("tec_emergencia"), reg.comando(K.ID_EMERGENCIA_TECLADO), self.tema,
                         self.f_accion, icono=t("icono_tec_emergencia"))
         b.poner_color(self.tema.emergencia)
-        b.configure(wraplength=max(caja.ancho - 12, 40))
+        b.configure(padx=2, wraplength=max(caja.ancho - 12, 40))
+        b.ajustar_letra(caja.ancho, caja.alto)      # «AYUDA» se lee siempre completo, en cualquier pantalla
         b.place(x=caja.x, y=caja.y, width=caja.ancho, height=caja.alto)
         reg.agregar(K.ID_EMERGENCIA_TECLADO, b, None, interno=True)
         self.botones[K.ID_EMERGENCIA_TECLADO] = b
