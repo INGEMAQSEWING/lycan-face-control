@@ -198,8 +198,8 @@ class BotonGrande(tk.Label):
         self._resaltado = False
         self._activo = False
         self.bind("<Button-1>", self._clic, add="+")
-        self.bind("<Enter>", lambda e: self._hover(True), add="+")
-        self.bind("<Leave>", lambda e: self._hover(False), add="+")
+        self.bind("<Enter>", lambda e=None: self._hover(True), add="+")
+        self.bind("<Leave>", lambda e=None: self._hover(False), add="+")
 
     def _borde_reposo(self):
         return self.tema.texto if self.tema.alto_contraste else self.tema.fondo
