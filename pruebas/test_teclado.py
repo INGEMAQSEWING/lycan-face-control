@@ -249,7 +249,13 @@ def test_teclado_escribe_habla_y_envia(app_tec):
     for esperado in ("tecla:q", "tecla:ñ", "frase:si", "frase:no", "accion:hablar", "ventana:teclado"):
         assert esperado in ids, esperado
     teclas = [o for o in app.motor.maquina.objetivos if o.id.startswith(("tecla:", "accion:", "frase:"))]
-    assert all(o.rect[2] - o.rect[0] >= 80 and o.rect[3] - o.rect[1] >= 80 for o in teclas)
+    # Teclas grandes: 80 px en pantallas como la del portátil (1366x768 o más). En pantallas
+    # más pequeñas (el servidor de GitHub usa 1024x768) se exige al menos 60 px.
+    ancho_pantalla = tec.win.winfo_screenwidth() if hasattr(tec, "win") else 1366
+    minimo = 80 if ancho_pantalla >= 1280 else 60
+    chicas = [(o.id, o.rect) for o in teclas
+              if o.rect[2] - o.rect[0] < minimo or o.rect[3] - o.rect[1] < minimo]
+    assert not chicas, (ancho_pantalla, chicas[:5])
     # elegir con la cabeza: Ñ, a, n, d, ´, u
     for c in ("ñ", "a", "n", "d", "tilde", "u"):
         _elegir(app, f"tecla:{c}")
